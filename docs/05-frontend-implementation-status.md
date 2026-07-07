@@ -31,15 +31,22 @@ from the code. Broad strokes only — read the doc above and the code itself for
 - **Backend CORS**: `backend/app/main.py` now adds `CORSMiddleware` (`allow_origins=["*"]`, GET-only) so the
   frontend can call the API directly in local dev without a proxy — safe given the API is public/read-only by
   design (doc 02).
+- **Docker image** (`frontend/Dockerfile`, `frontend/.dockerignore`): multi-stage build — `yarn build` (Node.js SSR
+  output, `yarn` install with `--frozen-lockfile`) in a `node:24-alpine` builder stage, then a slim `node:24-alpine`
+  runtime stage that just runs `node .output/server/index.mjs`. This is the Node.js SSR option from doc 02's
+  deployment section, not `yarn generate` static output — deliberately, since `ssr: false`/static generation would
+  reopen the `defaultTheme: 'dark'` hydration-warning problem `nuxt.config.ts` already has a comment about avoiding
+  (see the top-level `CLAUDE.md`). `NUXT_PUBLIC_API_BASE` is read from the environment at container start (Nuxt's
+  standard `NUXT_PUBLIC_<KEY>` runtime-config override), not baked in at build time — no placeholder/`sed`
+  substitution trick is needed the way a static-output image would need one, since a live Node process can just
+  read the env var per request and inject it into both the SSR payload and the hydration `<script>` blob. Verified
+  by building the image and curling a running container (200 OK, `apiBase` present in the rendered payload).
 
 ## What's deferred (not started)
 
 - **Mobile responsiveness** — pages have only been checked at desktop widths; the app-bar search field, org/bblock
   card grids, and dependency-chip rows likely need explicit breakpoint tuning (`v-col` sizing, app-bar collapsing
   the search field behind an icon on small screens, etc.) before this is usable on a phone.
-- **Dockerizing the frontend** — doc 02's deployment section describes shipping the frontend as either a Node.js
-  SSR container or `yarn generate` static output behind a CDN; neither has a `Dockerfile` yet (the backend already
-  has one — see doc 04).
 - **Visual identity** — this is intentionally the stock Vuetify theme (default Material-ish look, no brand colors/
   typography/spacing customization yet), per the explicit "standard Vuetify first" direction this was built under.
 - **Admin surface** — `/admin/status` and `/admin/conflicts` (doc 02) have no frontend views; only the public
