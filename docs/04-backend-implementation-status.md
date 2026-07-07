@@ -17,7 +17,9 @@ from the code. Broad strokes only — read the docs above and the code itself fo
   file's docstring for why.
 - **API**: `/orgs`, `/registers`, `/bblocks` (list + detail, with outgoing/incoming dependency edges), `/admin/status`,
   `/admin/conflicts`, `/admin/reindex` — matches doc 02's endpoint table. `/admin/*` requires an `X-Admin-Api-Key`
-  header if `BBLOCKS_ADMIN_API_KEY` is set (unset = unprotected, fine for local dev only).
+  header if `BBLOCKS_ADMIN_API_KEY` is set (unset = unprotected, fine for local dev only). `CORSMiddleware` allows
+  any origin on GET requests (`app/main.py`) — safe to leave permissive since the API is public/read-only by design,
+  and it's what lets the frontend (see doc 05) call it directly without a dev proxy.
 - **`GET /bblocks?q=`** is doc 03's hybrid search (see below), not the earlier `LIKE` placeholder.
 - **MCP server** (`app/mcp/server.py`, doc 02's "MCP interface" section): mounted at `/mcp` on the same FastAPI
   app/process (not a separate server) via the official `mcp` Python SDK's streamable-HTTP ASGI app, so it shares
@@ -76,7 +78,6 @@ Doc 03's keyword + semantic hybrid search, minus ontology-term boosting (see "Wh
 - **Ontology-term indexing and boosting** (doc 03's "Ontology-term indexing and boosting" section) — no
   `ontologies`/`bblock_uris` tables, no boost pass in the search service. This also means the MCP server's
   `search_bblocks` tool doesn't get ontology-term boosting either, since it shares the same `hybrid_search`.
-- **Frontend integration** — the Nuxt frontend has no application logic yet; nothing consumes this API.
 - **CI** — no GitHub Actions workflow runs `pytest`/`ruff` yet.
 - **Docker** — `Dockerfile`/`.dockerignore` exist but the image has never actually been built/run; treat it as
   unverified until someone does `docker build` + `docker run` against it.

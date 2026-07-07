@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import admin, bblocks, orgs, registers
 from app.db.migrate import run_migrations_to_head
@@ -37,6 +38,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="OGC Building Blocks Meta-Registry Viewer API", lifespan=lifespan)
+
+# Public API is read-only and unauthenticated by design (see docs/02-viewer-application.md), so
+# allowing any origin doesn't widen the actual attack surface -- it just lets the frontend call
+# this API directly from any host it's served from, without a proxy.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
 
 app.include_router(orgs.router)
 app.include_router(registers.router)
