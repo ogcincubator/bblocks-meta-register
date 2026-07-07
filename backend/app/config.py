@@ -22,6 +22,16 @@ class Settings(BaseSettings):
     # before this backend is reachable from anywhere untrusted.
     admin_api_key: str | None = None
 
+    # Comma-separated allowlists for the MCP server's DNS-rebinding protection (validated
+    # against the Host/Origin headers of requests to /mcp). Left unset (None) means the MCP
+    # endpoint has DNS-rebinding protection disabled -- fine for local dev, but must be set to
+    # the backend's real public host(s) before /mcp is reachable from anywhere untrusted. The
+    # MCP SDK's own localhost-only default (see mcp.server.fastmcp.server.FastMCP.__init__)
+    # requires an explicit port in the Host header, which a reverse-proxied public hostname
+    # normally won't have -- hence rolling our own instead of relying on that default.
+    mcp_allowed_hosts: str | None = None
+    mcp_allowed_origins: str | None = None
+
     # "ollama" (default -- self-hosted, no external dependency) or "openai_compatible".
     embedding_provider: str = "ollama"
     embedding_dimensions: int = 768

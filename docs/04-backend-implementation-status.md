@@ -19,6 +19,18 @@ from the code. Broad strokes only — read the docs above and the code itself fo
   `/admin/conflicts`, `/admin/reindex` — matches doc 02's endpoint table. `/admin/*` requires an `X-Admin-Api-Key`
   header if `BBLOCKS_ADMIN_API_KEY` is set (unset = unprotected, fine for local dev only).
 - **`GET /bblocks?q=`** is doc 03's hybrid search (see below), not the earlier `LIKE` placeholder.
+- **MCP server** (`app/mcp/server.py`, doc 02's "MCP interface" section): mounted at `/mcp` on the same FastAPI
+  app/process (not a separate server) via the official `mcp` Python SDK's streamable-HTTP ASGI app, so it shares
+  the process-global SQLite engine instead of needing its own DB connection handling. Nine tools: `search_bblocks`
+  (the hybrid search, for use-case/natural-language queries), `list_bblocks_tool` (plain filtered browse),
+  `get_bblock`/`get_register`/`get_org` (detail, same shape as the REST endpoints), `list_registers_tool`/
+  `list_orgs_tool`, and `bblock_dependencies`/`register_dependencies` (depth-limited BFS over the dependency edge
+  tables in either direction -- doc 02's "dependency traversal" tool, not exposed over REST at all). `/mcp` is
+  unauthenticated and open to any client by default, same as `/orgs`/`/registers`/`/bblocks` -- deliberately, since
+  the whole point is letting any LLM tooling reach it. `BBLOCKS_MCP_ALLOWED_HOSTS`/`BBLOCKS_MCP_ALLOWED_ORIGINS`
+  (see `.env.example`) exist only as an optional Host/Origin allowlist if this ever needs restricting later; unset
+  (the default) disables the check entirely, since the MCP SDK's own built-in protection would otherwise reject
+  non-localhost requests out of the box.
 - Self-migrates on startup (`app/db/migrate.py`, called from `app/main.py`'s lifespan) — no manual `alembic upgrade
   head` step needed for local dev.
 - Verified against real production data: a full crawl cycle against the live meta-registry (35 registers) completes
@@ -62,8 +74,8 @@ Doc 03's keyword + semantic hybrid search, minus ontology-term boosting (see "Wh
 ## What's deferred (not started)
 
 - **Ontology-term indexing and boosting** (doc 03's "Ontology-term indexing and boosting" section) — no
-  `ontologies`/`bblock_uris` tables, no boost pass in the search service.
-- **MCP server** (doc 02's "MCP interface" section) — not started.
+  `ontologies`/`bblock_uris` tables, no boost pass in the search service. This also means the MCP server's
+  `search_bblocks` tool doesn't get ontology-term boosting either, since it shares the same `hybrid_search`.
 - **Frontend integration** — the Nuxt frontend has no application logic yet; nothing consumes this API.
 - **CI** — no GitHub Actions workflow runs `pytest`/`ruff` yet.
 - **Docker** — `Dockerfile`/`.dockerignore` exist but the image has never actually been built/run; treat it as
@@ -116,6 +128,22 @@ Doc 03's keyword + semantic hybrid search, minus ontology-term boosting (see "Wh
   because respx's internal transport hooks didn't match httpx 0.28's internals. Bumped the constraint to
   `respx ^0.22` and ran `poetry update respx` to fix; if a future respx-based test mysteriously reports "not
   mocked" for an obviously-matching route, check the respx/httpx version pairing before assuming a routing bug.
+
+- **FastMCP's `streamable_http_app()` sub-app has its own lifespan that mounting alone never runs** — Starlette's
+  `Mount` only forwards `http`/`websocket` ASGI scopes to a sub-app, never `lifespan` (`Mount.matches()` explicitly
+  checks for those two scope types only), so `app.mount("/mcp", mcp.streamable_http_app())` silently leaves the MCP
+  session manager never started; every request would hang or error. Fixed in `app/main.py`'s `lifespan()` by
+  entering `mcp.session_manager.run()` manually alongside the crawl loop's task. `mcp.session_manager` is only
+  constructed lazily by `streamable_http_app()`, so that has to be called (and its result mounted) before the
+  `FastAPI(lifespan=...)` app that references `mcp.session_manager` is even built.
+- **FastMCP's own default `streamable_http_path` is `/mcp`**, same as the mount path used in `app/main.py` — left
+  at its default, the effective route becomes `/mcp/mcp`. `app/mcp/server.py` sets `streamable_http_path="/"` when
+  constructing `FastMCP(...)` to avoid the doubled segment.
+- **The MCP SDK's built-in DNS-rebinding protection only auto-enables for `host in ("127.0.0.1", "localhost",
+  "::1")`, and even then only allows `Host` headers with an explicit port** (`allowed_hosts=["localhost:*", ...]`,
+  no bare `"localhost"` entry) — a bare hostname (as a reverse proxy typically forwards) is rejected with 421
+  regardless. Rolled a `BBLOCKS_MCP_ALLOWED_HOSTS`/`BBLOCKS_MCP_ALLOWED_ORIGINS`-driven `TransportSecuritySettings`
+  instead of relying on the SDK's construction-time default (see `app/mcp/server.py`).
 
 ## Migration convention (current stage only)
 
