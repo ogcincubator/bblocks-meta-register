@@ -1,0 +1,32 @@
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="BBLOCKS_", env_file=".env", extra="ignore")
+
+    database_path: str = "./data/meta-register.db"
+
+    meta_registry_index_url: str = "https://w3id.org/ogc/bblocks/meta-register.json"
+    meta_registry_orgs_url: str = "https://w3id.org/ogc/bblocks/meta-register-orgs.json"
+
+    crawl_interval_seconds: int = 3600
+    crawl_on_startup: bool = True
+    crawl_worker_pool_size: int = 3
+    crawl_per_host_min_interval_seconds: float = 1.0
+
+    http_timeout_seconds: float = 30.0
+    http_max_retries: int = 3
+
+    # Pre-shared key required on all /admin/* requests via the X-Admin-Api-Key header.
+    # Left unset (None) means /admin is unprotected -- fine for local dev, but must be set
+    # before this backend is reachable from anywhere untrusted.
+    admin_api_key: str | None = None
+
+    @property
+    def database_url(self) -> str:
+        if self.database_path == ":memory:":
+            return "sqlite+aiosqlite://"
+        return f"sqlite+aiosqlite:///{self.database_path}"
+
+
+settings = Settings()
