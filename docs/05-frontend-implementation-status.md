@@ -41,12 +41,29 @@ from the code. Broad strokes only — read the doc above and the code itself for
   substitution trick is needed the way a static-output image would need one, since a live Node process can just
   read the env var per request and inject it into both the SSR payload and the hydration `<script>` blob. Verified
   by building the image and curling a running container (200 OK, `apiBase` present in the rendered payload).
+- **Mobile responsiveness**: app-bar collapses to icon buttons (search/orgs) below `md` instead of cramming a
+  search field + text button + title into one row; `BblockListItem.vue` hides its secondary schema/context/shapes
+  icons and item-class chip below `sm` (status chip stays) and stacks name/id vertically instead of overflowing;
+  `search.vue`'s filter selects go full-width below `sm` instead of squeezing to half-width. All done with plain
+  Tailwind responsive classes (`md:flex`, `md:hidden`, `sm:flex-row`, etc.), not JS viewport detection
+  (`useDisplay().mobile`) — the latter was tried first and reverted: Vuetify's SSR viewport guess defaults to
+  "mobile" for any browser without Client-Hints support (i.e. Firefox/Safari, and any browser on the very first
+  request), so it would have server-rendered the mobile layout for most desktop visitors and flipped it right after
+  hydration — the same class of hydration-mismatch flash `nuxt.config.ts`'s theme comment already avoids for a
+  different reason.
+- **Fixed: utility classes were silently no-ops.** `assets/styles/settings.scss` sets `$utilities: false`, which
+  (per `CLAUDE.md`) deliberately disables *all* of Vuetify's generated utility classes so Tailwind is the only
+  source of layout/spacing/typography utility classes — but this was discovered only after writing every page using
+  Vuetify/Bootstrap-convention names (`d-flex`, `ga-2`, `text-h4`, `font-weight-medium`, `text-medium-emphasis`,
+  etc.), none of which exist under either framework with `$utilities: false` set. Confirmed by grepping the
+  compiled `.output/public/_nuxt/*.css` for these class names (zero matches) with no browser available in-session
+  to catch it visually. Swept every `.vue` file under `app/` and replaced with real Tailwind names (`flex`/`hidden`/
+  `md:flex`, `gap-2`, `text-3xl`/`text-2xl`/etc., `font-bold`/`font-medium`, `opacity-70` in place of Vuetify's
+  medium-emphasis text color, `truncate`, `no-underline`). Re-verified the replacements are present in the compiled
+  CSS. See the `frontend-tailwind-utilities-only` memory for the full class-name mapping used.
 
 ## What's deferred (not started)
 
-- **Mobile responsiveness** — pages have only been checked at desktop widths; the app-bar search field, org/bblock
-  card grids, and dependency-chip rows likely need explicit breakpoint tuning (`v-col` sizing, app-bar collapsing
-  the search field behind an icon on small screens, etc.) before this is usable on a phone.
 - **Visual identity** — this is intentionally the stock Vuetify theme (default Material-ish look, no brand colors/
   typography/spacing customization yet), per the explicit "standard Vuetify first" direction this was built under.
 - **Admin surface** — `/admin/status` and `/admin/conflicts` (doc 02) have no frontend views; only the public

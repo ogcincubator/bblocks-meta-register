@@ -2,7 +2,7 @@
   <v-container class="py-8">
     <v-breadcrumbs :items="[{ title: 'Home', to: '/' }, { title: 'Search' }]" />
 
-    <h1 class="text-h4 mb-6">
+    <h1 class="text-3xl mb-6">
       Search Building Blocks
     </h1>
 
@@ -23,8 +23,9 @@
       </v-col>
 
       <v-col
-        cols="6"
+        cols="12"
         md="3"
+        sm="6"
       >
         <v-select
           v-model="itemClass"
@@ -38,8 +39,9 @@
       </v-col>
 
       <v-col
-        cols="6"
+        cols="12"
         md="4"
+        sm="6"
       >
         <v-select
           v-model="statusFilter"
@@ -69,7 +71,7 @@
     />
 
     <template v-else-if="data">
-      <p class="text-medium-emphasis mb-4">
+      <p class="opacity-70 mb-4">
         {{ data.numberMatched }} result{{ data.numberMatched === 1 ? '' : 's' }}
       </p>
 
@@ -83,12 +85,12 @@
 
       <p
         v-else
-        class="text-medium-emphasis"
+        class="opacity-70"
       >
         No building blocks matched your search.
       </p>
 
-      <div class="d-flex justify-center mt-6">
+      <div class="flex justify-center mt-6">
         <v-pagination
           v-if="pageCount > 1"
           v-model="page"

@@ -21,8 +21,8 @@
     </template>
 
     <template v-else-if="bblock">
-      <div class="d-flex align-center flex-wrap ga-2 mb-1">
-        <h1 class="text-h4">
+      <div class="flex items-center flex-wrap gap-2 mb-1">
+        <h1 class="text-3xl">
           {{ bblock.name }}
         </h1>
 
@@ -46,26 +46,26 @@
       </div>
 
       <NuxtLink
-        class="text-medium-emphasis text-decoration-none"
+        class="opacity-70 no-underline"
         :to="`/registers/${bblock.register_id}`"
       >
         {{ bblock.register_id }}
       </NuxtLink>
 
-      <p class="text-caption text-medium-emphasis mb-4">
+      <p class="text-xs opacity-70 mb-4">
         {{ bblock.id }}
       </p>
 
       <p
         v-if="bblock.abstract"
-        class="text-body-1 mb-4"
+        class="text-base mb-4"
       >
         {{ bblock.abstract }}
       </p>
 
       <div
         v-if="bblock.tags.length > 0"
-        class="d-flex flex-wrap ga-2 mb-6"
+        class="flex flex-wrap gap-2 mb-6"
       >
         <v-chip
           v-for="tag in bblock.tags"
@@ -77,11 +77,11 @@
         </v-chip>
       </div>
 
-      <h2 class="text-subtitle-1 mb-2">
+      <h2 class="text-base font-medium mb-2">
         Assets
       </h2>
 
-      <div class="d-flex flex-wrap ga-2 mb-6">
+      <div class="flex flex-wrap gap-2 mb-6">
         <template
           v-for="(url, name) in bblock.schema_urls"
           :key="`schema-${name}`"
@@ -125,12 +125,12 @@
 
         <span
           v-if="Object.keys(bblock.schema_urls).length === 0 && !bblock.ld_context_url && bblock.shacl_shapes_urls.length === 0"
-          class="text-medium-emphasis"
+          class="opacity-70"
         >No schema, context, or shapes published.</span>
       </div>
 
       <template v-if="bblock.sources.length > 0">
-        <h2 class="text-subtitle-1 mb-2">
+        <h2 class="text-base font-medium mb-2">
           Sources
         </h2>
 
@@ -156,11 +156,11 @@
           cols="12"
           md="6"
         >
-          <h2 class="text-subtitle-1 mb-2">
+          <h2 class="text-base font-medium mb-2">
             Depends on
           </h2>
 
-          <div class="d-flex flex-wrap ga-2">
+          <div class="flex flex-wrap gap-2">
             <v-chip
               v-for="dep in bblock.depends_on"
               :key="dep.id"
@@ -169,7 +169,7 @@
             >
               {{ dep.id }}
               <template #append>
-                <span class="text-caption ml-1">({{ dep.kind }})</span>
+                <span class="text-xs ml-1">({{ dep.kind }})</span>
               </template>
             </v-chip>
           </div>
@@ -180,11 +180,11 @@
           cols="12"
           md="6"
         >
-          <h2 class="text-subtitle-1 mb-2">
+          <h2 class="text-base font-medium mb-2">
             Depended on by
           </h2>
 
-          <div class="d-flex flex-wrap ga-2">
+          <div class="flex flex-wrap gap-2">
             <v-chip
               v-for="dep in bblock.dependents"
               :key="dep.id"
@@ -193,7 +193,7 @@
             >
               {{ dep.id }}
               <template #append>
-                <span class="text-caption ml-1">({{ dep.kind }})</span>
+                <span class="text-xs ml-1">({{ dep.kind }})</span>
               </template>
             </v-chip>
           </div>
@@ -202,7 +202,7 @@
 
       <v-divider class="my-6" />
 
-      <div class="text-caption text-medium-emphasis">
+      <div class="text-xs opacity-70">
         Added {{ bblock.date_time_addition || '—' }} · Last changed {{ bblock.date_of_last_change || '—' }}
       </div>
     </template>

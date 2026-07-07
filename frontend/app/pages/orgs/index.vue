@@ -2,7 +2,7 @@
   <v-container class="py-8">
     <v-breadcrumbs :items="[{ title: 'Home', to: '/' }, { title: 'Organizations' }]" />
 
-    <h1 class="text-h4 mb-4">
+    <h1 class="text-3xl mb-4">
       Organizations
     </h1>
 
@@ -41,7 +41,7 @@
         >
           <v-card-title>{{ org.name }}</v-card-title>
 
-          <v-card-text class="text-medium-emphasis">
+          <v-card-text class="opacity-70">
             {{ org.description || 'No description available.' }}
           </v-card-text>
         </v-card>

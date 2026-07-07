@@ -22,22 +22,22 @@
     </template>
 
     <template v-else-if="register">
-      <h1 class="text-h4 mb-1">
+      <h1 class="text-3xl mb-1">
         {{ register.name }}
       </h1>
 
-      <p class="text-medium-emphasis mb-4">
+      <p class="opacity-70 mb-4">
         {{ register.org_id }}
       </p>
 
       <p
         v-if="register.description"
-        class="text-body-1 mb-4"
+        class="text-base mb-4"
       >
         {{ register.description }}
       </p>
 
-      <div class="d-flex flex-wrap ga-2 mb-6">
+      <div class="flex flex-wrap gap-2 mb-6">
         <v-btn
           :href="register.register_url"
           prepend-icon="mdi-file-code-outline"
@@ -66,9 +66,9 @@
         class="mb-6"
         variant="outlined"
       >
-        <v-card-text class="d-flex flex-wrap ga-6">
+        <v-card-text class="flex flex-wrap gap-6">
           <div>
-            <div class="text-caption text-medium-emphasis">
+            <div class="text-xs opacity-70">
               Last crawled
             </div>
 
@@ -76,7 +76,7 @@
           </div>
 
           <div>
-            <div class="text-caption text-medium-emphasis">
+            <div class="text-xs opacity-70">
               Crawl status
             </div>
 
@@ -84,7 +84,7 @@
           </div>
 
           <div>
-            <div class="text-caption text-medium-emphasis">
+            <div class="text-xs opacity-70">
               Modified
             </div>
 
@@ -100,11 +100,11 @@
             cols="12"
             md="6"
           >
-            <h3 class="text-subtitle-1 mb-2">
+            <h3 class="text-base font-medium mb-2">
               Depends on
             </h3>
 
-            <div class="d-flex flex-wrap ga-2">
+            <div class="flex flex-wrap gap-2">
               <v-chip
                 v-for="dep in register.depends_on"
                 :key="dep.id"
@@ -121,11 +121,11 @@
             cols="12"
             md="6"
           >
-            <h3 class="text-subtitle-1 mb-2">
+            <h3 class="text-base font-medium mb-2">
               Depended on by
             </h3>
 
-            <div class="d-flex flex-wrap ga-2">
+            <div class="flex flex-wrap gap-2">
               <v-chip
                 v-for="dep in register.dependents"
                 :key="dep.id"
@@ -141,7 +141,7 @@
         <v-divider class="mb-6" />
       </template>
 
-      <h2 class="text-h5 mb-4">
+      <h2 class="text-2xl mb-4">
         Building Blocks ({{ register.bblocks.length }})
       </h2>
 
@@ -155,7 +155,7 @@
 
       <p
         v-else
-        class="text-medium-emphasis"
+        class="opacity-70"
       >
         No building blocks indexed for this register yet.
       </p>

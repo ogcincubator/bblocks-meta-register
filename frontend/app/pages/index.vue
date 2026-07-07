@@ -1,11 +1,11 @@
 <template>
   <v-container class="py-8">
     <div class="text-center py-8">
-      <h1 class="text-h3 font-weight-bold mb-2">
+      <h1 class="text-4xl font-bold mb-2">
         Find OGC Building Blocks
       </h1>
 
-      <p class="text-medium-emphasis mb-6">
+      <p class="opacity-70 mb-6">
         Search across every register known to the OGC Building Blocks meta-registry.
       </p>
 
@@ -28,8 +28,8 @@
 
     <v-divider class="mb-6" />
 
-    <div class="d-flex align-center justify-space-between mb-4">
-      <h2 class="text-h5">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-2xl">
         Organizations
       </h2>
 
@@ -78,7 +78,7 @@
         >
           <v-card-title>{{ org.name }}</v-card-title>
 
-          <v-card-text class="text-medium-emphasis">
+          <v-card-text class="opacity-70">
             {{ org.description || 'No description available.' }}
           </v-card-text>
         </v-card>

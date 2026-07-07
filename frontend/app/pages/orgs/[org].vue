@@ -21,19 +21,19 @@
     </template>
 
     <template v-else-if="org">
-      <h1 class="text-h4 mb-1">
+      <h1 class="text-3xl mb-1">
         {{ org.name }}
       </h1>
 
       <a
         v-if="org.url"
-        class="text-medium-emphasis"
+        class="opacity-70"
         :href="org.url"
         rel="noopener"
         target="_blank"
       >{{ org.url }}</a>
 
-      <p class="text-body-1 mt-4">
+      <p class="text-base mt-4">
         {{ org.description }}
       </p>
 
@@ -55,7 +55,7 @@
 
       <v-divider class="mb-6" />
 
-      <h2 class="text-h5 mb-4">
+      <h2 class="text-2xl mb-4">
         Registers
       </h2>
 

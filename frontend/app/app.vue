@@ -3,7 +3,7 @@
     <v-app-bar>
       <v-app-bar-title>
         <NuxtLink
-          class="text-decoration-none text-high-emphasis"
+          class="no-underline"
           to="/"
         >
           OGC Building Blocks Meta-Registry
@@ -12,7 +12,7 @@
 
       <v-text-field
         v-model="query"
-        class="mx-4"
+        class="mx-4 hidden md:flex"
         density="compact"
         flat
         hide-details
@@ -25,6 +25,19 @@
       />
 
       <v-btn
+        class="md:hidden"
+        icon="mdi-magnify"
+        to="/search"
+      />
+
+      <v-btn
+        class="md:hidden"
+        icon="mdi-domain"
+        to="/orgs"
+      />
+
+      <v-btn
+        class="hidden md:flex"
         to="/orgs"
         variant="text"
       >
