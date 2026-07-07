@@ -150,55 +150,17 @@
         </v-list>
       </template>
 
-      <v-row v-if="bblock.depends_on.length > 0 || bblock.dependents.length > 0">
-        <v-col
-          v-if="bblock.depends_on.length > 0"
-          cols="12"
-          md="6"
-        >
-          <h2 class="text-base font-medium mb-2">
-            Depends on
-          </h2>
+      <template v-if="bblock.depends_on.length > 0 || bblock.dependents.length > 0">
+        <h2 class="text-base font-medium mb-2">
+          Dependencies
+        </h2>
 
-          <div class="flex flex-wrap gap-2">
-            <v-chip
-              v-for="dep in bblock.depends_on"
-              :key="dep.id"
-              size="small"
-              :to="`/bblocks/${dep.id}`"
-            >
-              {{ dep.id }}
-              <template #append>
-                <span class="text-xs ml-1">({{ dep.kind }})</span>
-              </template>
-            </v-chip>
-          </div>
-        </v-col>
-
-        <v-col
-          v-if="bblock.dependents.length > 0"
-          cols="12"
-          md="6"
-        >
-          <h2 class="text-base font-medium mb-2">
-            Depended on by
-          </h2>
-
-          <div class="flex flex-wrap gap-2">
-            <v-chip
-              v-for="dep in bblock.dependents"
-              :key="dep.id"
-              size="small"
-              :to="`/bblocks/${dep.id}`"
-            >
-              {{ dep.id }}
-              <template #append>
-                <span class="text-xs ml-1">({{ dep.kind }})</span>
-              </template>
-            </v-chip>
-          </div>
-        </v-col>
-      </v-row>
+        <DependencyGraph
+          :center-id="identifier"
+          :graph="graph"
+          node-type="bblock"
+        />
+      </template>
 
       <v-divider class="my-6" />
 
@@ -210,10 +172,11 @@
 </template>
 
 <script lang="ts" setup>
-  import type { BblockDetail } from '~/types/api'
+  import type { BblockDetail, DependencyGraph as DependencyGraphData } from '~/types/api'
 
   const route = useRoute()
   const identifier = route.params.identifier as string
 
   const { data: bblock, status, error } = useApi<BblockDetail>(`/bblocks/${identifier}`)
+  const { data: graph } = useApi<DependencyGraphData>(`/bblocks/${identifier}/graph`, { query: { depth: 2 } })
 </script>

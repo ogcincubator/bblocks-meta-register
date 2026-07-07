@@ -94,49 +94,16 @@
       </v-card>
 
       <template v-if="register.depends_on.length > 0 || register.dependents.length > 0">
-        <v-row class="mb-2">
-          <v-col
-            v-if="register.depends_on.length > 0"
-            cols="12"
-            md="6"
-          >
-            <h3 class="text-base font-medium mb-2">
-              Depends on
-            </h3>
+        <h3 class="text-base font-medium mb-2">
+          Register dependencies
+        </h3>
 
-            <div class="flex flex-wrap gap-2">
-              <v-chip
-                v-for="dep in register.depends_on"
-                :key="dep.id"
-                size="small"
-                :to="`/registers/${dep.id}`"
-              >
-                {{ dep.id }}
-              </v-chip>
-            </div>
-          </v-col>
-
-          <v-col
-            v-if="register.dependents.length > 0"
-            cols="12"
-            md="6"
-          >
-            <h3 class="text-base font-medium mb-2">
-              Depended on by
-            </h3>
-
-            <div class="flex flex-wrap gap-2">
-              <v-chip
-                v-for="dep in register.dependents"
-                :key="dep.id"
-                size="small"
-                :to="`/registers/${dep.id}`"
-              >
-                {{ dep.id }}
-              </v-chip>
-            </div>
-          </v-col>
-        </v-row>
+        <DependencyGraph
+          :center-id="`${orgId}/${registerName}`"
+          class="mb-6"
+          :graph="graph"
+          node-type="register"
+        />
 
         <v-divider class="mb-6" />
       </template>
@@ -164,11 +131,12 @@
 </template>
 
 <script lang="ts" setup>
-  import type { RegisterDetail } from '~/types/api'
+  import type { DependencyGraph as DependencyGraphData, RegisterDetail } from '~/types/api'
 
   const route = useRoute()
   const orgId = route.params.org as string
   const registerName = route.params.register as string
 
   const { data: register, status, error } = useApi<RegisterDetail>(`/registers/${orgId}/${registerName}`)
+  const { data: graph } = useApi<DependencyGraphData>(`/registers/${orgId}/${registerName}/graph`, { query: { depth: 2 } })
 </script>

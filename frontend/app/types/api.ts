@@ -84,6 +84,26 @@ export interface BblockListResponse {
   items: BblockSummary[]
 }
 
+export interface GraphNode {
+  id: string
+  name: string
+  known: boolean
+  register_id: string | null
+  org_id: string | null
+  item_class: string | null
+}
+
+export interface GraphEdge {
+  source: string
+  target: string
+  kind: string
+}
+
+export interface DependencyGraph {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+}
+
 export interface BblockListParams {
   q?: string
   item_class?: string
