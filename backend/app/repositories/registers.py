@@ -27,6 +27,14 @@ async def get_register_by_url(session: AsyncSession, register_url: str) -> Regis
     return result.scalar_one_or_none()
 
 
+async def get_register_url(session: AsyncSession, register_id: str) -> str | None:
+    """Resolves a register alias (e.g. "ogc/main") to its register.json URL -- needed to filter
+    hybrid search's vector pass, since vector_chunks is keyed by register_url, not register_id
+    (see app/search/vector_store.py)."""
+    result = await session.execute(select(Register.register_url).where(Register.id == register_id))
+    return result.scalar_one_or_none()
+
+
 async def get_register_modified(session: AsyncSession, register_id: str) -> str | None:
     """Lightweight lookup of just the change-detection field, avoiding the bblocks join
     that get_register() incurs via selectinload -- called once per register on every crawl."""

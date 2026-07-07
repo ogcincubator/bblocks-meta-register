@@ -22,6 +22,21 @@ class Settings(BaseSettings):
     # before this backend is reachable from anywhere untrusted.
     admin_api_key: str | None = None
 
+    # "ollama" (default -- self-hosted, no external dependency) or "openai_compatible".
+    embedding_provider: str = "ollama"
+    embedding_dimensions: int = 768
+
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_embedding_model: str = "nomic-embed-text-v2-moe:latest"
+
+    openai_compatible_base_url: str | None = None
+    openai_compatible_embedding_model: str | None = None
+    openai_compatible_api_key: str | None = None
+
+    embedding_batch_size: int = 64
+    search_keyword_candidates: int = 50
+    search_semantic_candidates: int = 50
+
     @property
     def database_url(self) -> str:
         if self.database_path == ":memory:":

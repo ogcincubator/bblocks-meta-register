@@ -5,6 +5,7 @@ import pytest
 from app.crawler.discovery import RegisterInfo
 from app.crawler.indexer import index_register
 from app.repositories.orgs import upsert_org
+from app.search.keyword_index import upsert as fts_upsert
 
 pytestmark = pytest.mark.asyncio
 
@@ -42,6 +43,21 @@ async def _seed(db_session):
                 }
             ],
         },
+    )
+    # index_register only replaces the relational rows -- the crawler's index_search_content
+    # (see app/crawler/indexer.py) is what would normally also populate the FTS/vector search
+    # indexes, but that needs a reachable embedding provider, so the keyword row is seeded
+    # directly here to exercise the q= path without a real Ollama call.
+    await fts_upsert(
+        db_session,
+        bblock_id="ogc.main.a",
+        register_id="ogc/main",
+        org="ogc",
+        item_class="schema",
+        status=None,
+        name="A",
+        abstract="a bounding box thing",
+        tags=[],
     )
     await db_session.commit()
 

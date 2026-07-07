@@ -22,6 +22,7 @@ class BblockSummary(BaseModel):
     has_schema: bool
     has_ld_context: bool
     has_shacl_shapes: bool
+    matched_chunk_types: list[str] | None = None
 
 
 class BblockDetail(BblockSummary):

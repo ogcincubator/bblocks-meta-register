@@ -101,10 +101,6 @@ async def test_list_bblocks_filters_and_paging(db_session):
     assert total == 3
     assert len(items) == 2
 
-    items, total = await bblocks_repo.list_bblocks(db_session, q="bounding box")
-    assert total == 1
-    assert items[0].id == "ogc.main.item0"
-
 
 async def test_bblock_deps_and_register_deps_roundtrip(db_session):
     await _seed_org_and_register(db_session)

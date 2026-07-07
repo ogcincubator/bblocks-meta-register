@@ -13,13 +13,14 @@ from app.config import settings
 from app.crawler.change_detection import needs_reindex
 from app.crawler.discovery import Discovery, RegisterInfo, discover
 from app.crawler.http import make_client
-from app.crawler.indexer import index_register
+from app.crawler.indexer import index_register, index_search_content
 from app.crawler.orphans import cleanup_orphans
 from app.crawler.register_fetch import fetch_register
 from app.db.base import session_scope
 from app.repositories.crawl_status import finish_run, start_run
 from app.repositories.orgs import upsert_org
 from app.repositories.registers import get_register_modified, record_crawl_result
+from app.search.embeddings import get_embedding_provider
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,10 @@ async def _crawl_one_register(client, semaphore: asyncio.Semaphore, register_inf
                     await session.commit()
                     return
 
-                await index_register(session, register_info, register_json)
+                indexed_ids = await index_register(session, register_info, register_json)
+                await index_search_content(
+                    session, client, get_embedding_provider(), register_info, register_json, indexed_ids
+                )
                 await record_crawl_result(session, register_info.register_id, status="ok")
                 await finish_run(session, run_id, status="ok")
                 await session.commit()

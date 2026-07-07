@@ -1,4 +1,4 @@
-"""Initial schema: orgs, registers, bblocks, dependency edges, conflicts, crawl runs
+"""Initial schema: orgs, registers, bblocks, dependency edges, conflicts, crawl runs, search indexes
 
 Revision ID: 0001
 Revises:
@@ -9,6 +9,10 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+
+from app.config import settings
+from app.search.keyword_index import create_fts_table, FTS_TABLE
+from app.search.vector_store import create_vector_table, VECTOR_TABLE
 
 revision: str = "0001"
 down_revision: Union[str, None] = None
@@ -113,8 +117,18 @@ def upgrade() -> None:
     )
     op.create_index("ix_crawl_runs_register_id", "crawl_runs", ["register_id"])
 
+    # sqlite-vec/FTS5 virtual tables aren't representable as SQLAlchemy Core metadata (no
+    # op.create_table equivalent), so they're created via the same raw-DDL helpers
+    # app/search/vector_store.py and app/search/keyword_index.py use for test setup -- one
+    # definition of the schema, not two. docs/03-indexing-and-search.md.
+    connection = op.get_bind()
+    create_vector_table(connection.connection.dbapi_connection, dimensions=settings.embedding_dimensions)
+    create_fts_table(connection.connection.dbapi_connection)
+
 
 def downgrade() -> None:
+    op.execute(f"DROP TABLE IF EXISTS {FTS_TABLE}")
+    op.execute(f"DROP TABLE IF EXISTS {VECTOR_TABLE}")
     op.drop_table("crawl_runs")
     op.drop_table("identifier_conflicts")
     op.drop_table("register_deps")

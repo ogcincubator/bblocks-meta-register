@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db.base import get_session
+from app.search.embeddings import EmbeddingProvider, get_embedding_provider
 
 
 async def db_session() -> AsyncIterator[AsyncSession]:
@@ -15,6 +16,11 @@ async def db_session() -> AsyncIterator[AsyncSession]:
 
 
 SessionDep = Annotated[AsyncSession, Depends(db_session)]
+
+# A plain function dependency (not a generator) -- tests override it the same way as
+# db_session, via app.dependency_overrides, to swap in a fixed-vector fake and avoid needing a
+# real Ollama instance reachable in CI/offline runs.
+EmbeddingProviderDep = Annotated[EmbeddingProvider, Depends(get_embedding_provider)]
 
 
 async def require_admin_key(x_admin_api_key: str | None = Header(default=None)) -> None:

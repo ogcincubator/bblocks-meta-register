@@ -8,6 +8,7 @@ everything currently in register.json.
 
 import logging
 
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.crawler.discovery import RegisterInfo
@@ -15,6 +16,9 @@ from app.repositories.bblocks import delete_bblocks_for_register, get_owning_reg
 from app.repositories.conflicts import record_conflict
 from app.repositories.deps import outgoing_bblock_deps, replace_bblock_deps, replace_register_deps
 from app.repositories.registers import upsert_register
+from app.search import keyword_index, vector_store
+from app.search.chunking import build_register_chunks
+from app.search.embeddings import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +67,11 @@ def _extract_presence(raw_bblock: dict) -> tuple[dict, str | None, list[str]]:
     return schema_urls, ld_context_url, shacl_shapes_urls
 
 
-async def index_register(session: AsyncSession, register_info: RegisterInfo, register_json: dict) -> None:
+async def index_register(session: AsyncSession, register_info: RegisterInfo, register_json: dict) -> list[str]:
+    """Full-replace relational indexing. Returns the itemIdentifiers actually accepted (i.e.
+    excluding any rejected for an identifier conflict) -- index_search_content() below uses
+    this to keep the FTS5/vector indexes limited to the same set of bblocks as the relational
+    tables, rather than re-deriving accepted-ness itself."""
     register_id = register_info.register_id
 
     await upsert_register(
@@ -137,3 +145,44 @@ async def index_register(session: AsyncSession, register_info: RegisterInfo, reg
             if target_register_id and target_register_id != register_id:
                 register_edges.add((target_register_id, kind))
     await replace_register_deps(session, register_id, register_edges)
+
+    return indexed_ids
+
+
+async def index_search_content(
+    session: AsyncSession,
+    client: httpx.AsyncClient,
+    embedding_provider: EmbeddingProvider,
+    register_info: RegisterInfo,
+    register_json: dict,
+    indexed_ids: list[str],
+) -> None:
+    """Full-replace of this register's FTS5 keyword rows and vector chunks (docs/03's "when a
+    register's content hash changes, that register's data is fully replaced" -- applies to the
+    search indexes the same way it applies to the relational rows in index_register() above).
+    Only bblocks in `indexed_ids` (i.e. not rejected for an identifier conflict) are indexed.
+    """
+    await vector_store.delete_by_register(session, register_info.register_url)
+    await keyword_index.delete_by_register(session, register_info.register_id)
+
+    indexed_ids_set = set(indexed_ids)
+    accepted_bblocks = [b for b in register_json.get("bblocks", []) if b.get("itemIdentifier") in indexed_ids_set]
+    filtered_register_json = {**register_json, "bblocks": accepted_bblocks}
+
+    chunks = await build_register_chunks(client, register_info, filtered_register_json)
+    if chunks:
+        embeddings = await embedding_provider.embed_documents([chunk.text for chunk in chunks])
+        await vector_store.upsert_chunks(session, chunks, embeddings)
+
+    for raw_bblock in accepted_bblocks:
+        await keyword_index.upsert(
+            session,
+            bblock_id=raw_bblock["itemIdentifier"],
+            register_id=register_info.register_id,
+            org=register_info.org_id,
+            item_class=raw_bblock.get("itemClass"),
+            status=raw_bblock.get("status"),
+            name=raw_bblock.get("name", raw_bblock["itemIdentifier"]),
+            abstract=raw_bblock.get("abstract"),
+            tags=raw_bblock.get("tags") or [],
+        )

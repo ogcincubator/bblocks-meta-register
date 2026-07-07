@@ -7,19 +7,18 @@ from app.db.models import Bblock, Register
 async def list_bblocks(
     session: AsyncSession,
     *,
-    q: str | None = None,
     item_class: str | None = None,
+    status: str | None = None,
     register_id: str | None = None,
     org_id: str | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> tuple[list[Bblock], int]:
-    """Returns (page of bblocks, total matching count).
+    """Returns (page of bblocks, total matching count), ordered by id.
 
-    `q` is a plain SQL LIKE over name/abstract/id -- a placeholder for the FTS5/sqlite-vec
-    hybrid search described in docs/03-indexing-and-search.md, which is not implemented yet.
-    Kept as a simple substring filter so the endpoint contract (query param name, response
-    envelope) doesn't need to change once real search lands.
+    No `q` param here -- a free-text query is handled by app/search/service.py's hybrid search
+    instead (see app/api/bblocks.py), which returns ranked bblock ids that get_bblocks_by_ids()
+    below then hydrates. This function is the plain browse/filter path.
     """
     stmt = select(Bblock)
     if org_id is not None:
@@ -28,9 +27,8 @@ async def list_bblocks(
         stmt = stmt.where(Bblock.register_id == register_id)
     if item_class is not None:
         stmt = stmt.where(Bblock.item_class == item_class)
-    if q is not None:
-        like = f"%{q}%"
-        stmt = stmt.where((Bblock.name.ilike(like)) | (Bblock.abstract.ilike(like)) | (Bblock.id.ilike(like)))
+    if status is not None:
+        stmt = stmt.where(Bblock.status == status)
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = (await session.execute(count_stmt)).scalar_one()
@@ -42,6 +40,15 @@ async def list_bblocks(
 
 async def get_bblock(session: AsyncSession, bblock_id: str) -> Bblock | None:
     return await session.get(Bblock, bblock_id)
+
+
+async def get_bblocks_by_ids(session: AsyncSession, ids: list[str]) -> dict[str, Bblock]:
+    """Unordered id -> Bblock lookup for hydrating a ranked id list from hybrid search --
+    callers apply the ranking, this just avoids N+1 session.get() round trips."""
+    if not ids:
+        return {}
+    result = await session.execute(select(Bblock).where(Bblock.id.in_(ids)))
+    return {bblock.id: bblock for bblock in result.scalars().all()}
 
 
 async def upsert_bblock(

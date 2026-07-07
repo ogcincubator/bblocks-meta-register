@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import sqlite_vec
 from sqlalchemy import MetaData, event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
@@ -52,6 +53,21 @@ def _make_engine(database_url: str) -> AsyncEngine:
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
+
+        # sqlite-vec ships as a loadable extension, not a Python-side implementation -- every
+        # connection needs it loaded before any vec0 virtual table (search/vector_store.py) is
+        # touched. `enable_load_extension`/`load_extension` are awaitable-only on aiosqlite's
+        # driver connection, hence `run_async` (SQLAlchemy's documented pattern for calling
+        # async-only driver methods from a sync pool event handler) instead of calling them
+        # directly on the sync-looking `dbapi_connection` adapter. Load/unload immediately
+        # around it rather than leaving extension loading enabled for the connection's
+        # lifetime, since that's an unnecessary attack surface.
+        async def _load_sqlite_vec(raw_connection):
+            await raw_connection.enable_load_extension(True)
+            await raw_connection.load_extension(sqlite_vec.loadable_path())
+            await raw_connection.enable_load_extension(False)
+
+        dbapi_connection.run_async(_load_sqlite_vec)
 
     return engine
 
