@@ -21,13 +21,14 @@
     "vuetify-nuxt-module": "^1.0.0-beta.1"
   },
   "devDependencies": {
+    "@intellectronica/ruler": "^0.3.37",
+    "@nuxt/eslint": "^1.15.2",
     "@nuxt/fonts": "^0.14.0",
     "@tailwindcss/postcss": "^4.2.1",
+    "eslint": "^9.39.4",
+    "eslint-config-vuetify": "^4.3.4",
     "sass": "^1.98.0",
     "tailwindcss": "^4.2.1",
-    "eslint": "^9.39.4",
-    "@nuxt/eslint": "^1.15.2",
-    "eslint-config-vuetify": "^4.3.4",
-    "@intellectronica/ruler": "^0.3.37"
+    "typescript": "^6.0.3"
   }
 }

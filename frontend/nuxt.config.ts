@@ -3,6 +3,12 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-12-21',
   devtools: { enabled: true },
 
+  runtimeConfig: {
+    public: {
+      apiBase: 'http://localhost:8000',
+    },
+  },
+
   // ssr: false,
   modules: ['@nuxt/fonts', 'vuetify-nuxt-module', '@nuxt/eslint'],
 
