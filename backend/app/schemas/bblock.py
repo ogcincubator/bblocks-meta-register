@@ -47,6 +47,26 @@ class RegisterDepEdge(BaseModel):
     kind: str
 
 
+class GraphNode(BaseModel):
+    id: str
+    name: str
+    known: bool
+    register_id: str | None = None
+    org_id: str | None = None
+    item_class: str | None = None
+
+
+class GraphEdge(BaseModel):
+    source: str
+    target: str
+    kind: str
+
+
+class DependencyGraph(BaseModel):
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+
+
 class IdentifierConflict(BaseModel):
     id: int
     conflicting_id: str

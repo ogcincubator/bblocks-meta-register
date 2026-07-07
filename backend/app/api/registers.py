@@ -1,9 +1,13 @@
-from fastapi import APIRouter, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, HTTPException, Query
 
 from app.api.deps import SessionDep
 from app.repositories.deps import incoming_register_deps, outgoing_register_deps
 from app.repositories.registers import get_register, list_registers
+from app.schemas.bblock import DependencyGraph, GraphEdge, GraphNode
 from app.schemas.register import RegisterDetail, RegisterDepEdge, RegisterSummary
+from app.services.dependency_graph import build_register_graph
 
 router = APIRouter(prefix="/registers", tags=["registers"])
 
@@ -12,6 +16,25 @@ router = APIRouter(prefix="/registers", tags=["registers"])
 async def list_registers_endpoint(session: SessionDep, org: str | None = None) -> list[RegisterSummary]:
     registers = await list_registers(session, org_id=org)
     return [RegisterSummary.model_validate(r) for r in registers]
+
+
+@router.get("/{org_id}/{register_name}/graph", response_model=DependencyGraph)
+async def get_register_graph_endpoint(
+    org_id: str,
+    register_name: str,
+    session: SessionDep,
+    direction: Literal["depends_on", "dependents", "both"] = "both",
+    depth: int = Query(default=2, ge=1, le=5),
+) -> DependencyGraph:
+    register_id = f"{org_id}/{register_name}"
+    if await get_register(session, register_id) is None:
+        raise HTTPException(status_code=404, detail=f"Register '{register_id}' not found")
+
+    graph = await build_register_graph(session, register_id, direction, depth)
+    return DependencyGraph(
+        nodes=[GraphNode(**vars(n)) for n in graph.nodes],
+        edges=[GraphEdge(**vars(e)) for e in graph.edges],
+    )
 
 
 @router.get("/{org_id}/{register_name}", response_model=RegisterDetail)

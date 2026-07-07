@@ -22,6 +22,15 @@ async def get_register(session: AsyncSession, register_id: str) -> Register | No
     return result.scalar_one_or_none()
 
 
+async def get_registers_by_ids(session: AsyncSession, ids: list[str]) -> dict[str, Register]:
+    """Unordered id -> Register lookup for hydrating dependency-graph node ids, mirroring
+    get_bblocks_by_ids() -- avoids N+1 session.get() round trips."""
+    if not ids:
+        return {}
+    result = await session.execute(select(Register).where(Register.id.in_(ids)))
+    return {register.id: register for register in result.scalars().all()}
+
+
 async def get_register_by_url(session: AsyncSession, register_url: str) -> Register | None:
     result = await session.execute(select(Register).where(Register.register_url == register_url))
     return result.scalar_one_or_none()

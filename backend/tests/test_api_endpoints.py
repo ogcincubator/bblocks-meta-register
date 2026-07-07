@@ -110,6 +110,73 @@ async def test_bblocks_endpoints(db_session, api_client):
     assert response.status_code == 404
 
 
+async def test_bblock_graph_endpoint(db_session, api_client):
+    await _seed(db_session)
+    register_info = RegisterInfo(register_id="ogc/main", org_id="ogc", name="main", register_url="https://example.org/register.json")
+    await index_register(
+        db_session,
+        register_info,
+        {
+            "name": "Main",
+            "modified": "2026-01-01T00:00:00Z",
+            "bblocks": [
+                {
+                    "itemIdentifier": "ogc.main.a",
+                    "name": "A",
+                    "abstract": "a bounding box thing",
+                    "itemClass": "schema",
+                    "schema": {"application/json": "https://example.org/schema.json"},
+                },
+                {
+                    "itemIdentifier": "ogc.main.b",
+                    "name": "B",
+                    "itemClass": "schema",
+                    "dependsOn": ["ogc.main.a", "bblocks://ogc.external.unknown"],
+                },
+            ],
+        },
+    )
+    await db_session.commit()
+
+    response = await api_client.get("/bblocks/ogc.main.b/graph", params={"direction": "depends_on"})
+    assert response.status_code == 200
+    body = response.json()
+    node_ids = {n["id"]: n for n in body["nodes"]}
+    assert node_ids["ogc.main.a"]["known"] is True
+    assert node_ids["ogc.main.a"]["register_id"] == "ogc/main"
+    assert node_ids["ogc.external.unknown"]["known"] is False
+    assert node_ids["ogc.external.unknown"]["register_id"] is None
+    edges = {(e["source"], e["target"]) for e in body["edges"]}
+    assert ("ogc.main.b", "ogc.main.a") in edges
+    assert ("ogc.main.b", "ogc.external.unknown") in edges
+
+    response = await api_client.get("/bblocks/ogc.main.a/graph", params={"direction": "dependents"})
+    assert response.status_code == 200
+    dependents_body = response.json()
+    dependent_ids = {n["id"] for n in dependents_body["nodes"]}
+    assert "ogc.main.b" in dependent_ids
+    # Edge must still read depender -> dependee ("b depends on a"), even though this was
+    # discovered by walking a's *incoming* edges.
+    dependents_edges = {(e["source"], e["target"]) for e in dependents_body["edges"]}
+    assert ("ogc.main.b", "ogc.main.a") in dependents_edges
+
+    response = await api_client.get("/bblocks/does.not.exist/graph")
+    assert response.status_code == 404
+
+
+async def test_register_graph_endpoint(db_session, api_client):
+    await _seed(db_session)
+
+    response = await api_client.get("/registers/ogc/main/graph")
+    assert response.status_code == 200
+    body = response.json()
+    assert [n["id"] for n in body["nodes"]] == ["ogc/main"]
+    assert body["edges"] == []
+
+    response = await api_client.get("/registers/ogc/missing/graph")
+    assert response.status_code == 404
+
+
 async def test_admin_status_and_reindex(api_client, monkeypatch):
     response = await api_client.get("/admin/status")
     assert response.status_code == 200

@@ -1,11 +1,22 @@
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, Query
 
 from app.api.deps import EmbeddingProviderDep, SessionDep
 from app.repositories.bblocks import get_bblock, get_bblocks_by_ids, list_bblocks
 from app.repositories.deps import incoming_bblock_deps, outgoing_bblock_deps
 from app.repositories.registers import get_register_url
-from app.schemas.bblock import BblockDetail, BblockListResponse, BblockSummary, DepEdge
+from app.schemas.bblock import (
+    BblockDetail,
+    BblockListResponse,
+    BblockSummary,
+    DependencyGraph,
+    DepEdge,
+    GraphEdge,
+    GraphNode,
+)
 from app.search.service import hybrid_search
+from app.services.dependency_graph import build_bblock_graph
 
 router = APIRouter(prefix="/bblocks", tags=["bblocks"])
 
@@ -85,6 +96,23 @@ async def _search_bblocks(
         summaries.append(summary.model_copy(update={"matched_chunk_types": hit.matched_chunk_types}))
 
     return BblockListResponse(numberMatched=total, numberReturned=len(summaries), items=summaries)
+
+
+@router.get("/{identifier}/graph", response_model=DependencyGraph)
+async def get_bblock_graph_endpoint(
+    identifier: str,
+    session: SessionDep,
+    direction: Literal["depends_on", "dependents", "both"] = "both",
+    depth: int = Query(default=2, ge=1, le=5),
+) -> DependencyGraph:
+    if await get_bblock(session, identifier) is None:
+        raise HTTPException(status_code=404, detail=f"Bblock '{identifier}' not found")
+
+    graph = await build_bblock_graph(session, identifier, direction, depth)
+    return DependencyGraph(
+        nodes=[GraphNode(**vars(n)) for n in graph.nodes],
+        edges=[GraphEdge(**vars(e)) for e in graph.edges],
+    )
 
 
 @router.get("/{identifier}", response_model=BblockDetail)

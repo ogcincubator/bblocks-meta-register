@@ -24,6 +24,10 @@ from app.repositories.deps import (
     incoming_register_deps,
     outgoing_bblock_deps,
     outgoing_register_deps,
+    traverse_incoming_bblock_deps,
+    traverse_incoming_register_deps,
+    traverse_outgoing_bblock_deps,
+    traverse_outgoing_register_deps,
 )
 from app.repositories.orgs import get_org as repo_get_org
 from app.repositories.orgs import list_orgs
@@ -34,8 +38,7 @@ from app.schemas.org import OrgDetail, OrgSummary
 from app.schemas.register import RegisterDepEdge, RegisterDetail, RegisterSummary
 from app.search.embeddings import get_embedding_provider
 from app.search.service import hybrid_search
-
-MAX_DEPENDENCY_DEPTH = 5
+from app.services.dependency_graph import MAX_DEPENDENCY_DEPTH
 
 # See config.py's mcp_allowed_hosts/mcp_allowed_origins docstring for why this doesn't rely on
 # FastMCP's own built-in localhost default.
@@ -234,33 +237,6 @@ async def get_org(identifier: str) -> dict:
         return OrgDetail.model_validate(org).model_dump()
 
 
-async def _traverse(
-    session,
-    start_id: str,
-    edge_fn,
-    depth: int,
-) -> list[list[dict]]:
-    """Breadth-first walk of a dependency edge table, one level of the graph per list entry.
-    Stops early once a level yields no new edges rather than padding out to `depth`."""
-    visited = {start_id}
-    frontier = [start_id]
-    levels: list[list[dict]] = []
-    for _ in range(depth):
-        next_frontier: list[str] = []
-        level_edges: list[dict] = []
-        for node in frontier:
-            for other_id, kind in await edge_fn(session, node):
-                level_edges.append({"from": node, "to": other_id, "kind": kind})
-                if other_id not in visited:
-                    visited.add(other_id)
-                    next_frontier.append(other_id)
-        if not level_edges:
-            break
-        levels.append(level_edges)
-        frontier = next_frontier
-    return levels
-
-
 @mcp.tool()
 async def bblock_dependencies(
     identifier: str,
@@ -285,9 +261,9 @@ async def bblock_dependencies(
 
         result: dict[str, list[list[dict]]] = {}
         if direction in ("depends_on", "both"):
-            result["depends_on"] = await _traverse(session, identifier, outgoing_bblock_deps, depth)
+            result["depends_on"] = await traverse_outgoing_bblock_deps(session, identifier, depth)
         if direction in ("dependents", "both"):
-            result["dependents"] = await _traverse(session, identifier, incoming_bblock_deps, depth)
+            result["dependents"] = await traverse_incoming_bblock_deps(session, identifier, depth)
         return result
 
 
@@ -306,7 +282,7 @@ async def register_dependencies(
 
         result: dict[str, list[list[dict]]] = {}
         if direction in ("depends_on", "both"):
-            result["depends_on"] = await _traverse(session, identifier, outgoing_register_deps, depth)
+            result["depends_on"] = await traverse_outgoing_register_deps(session, identifier, depth)
         if direction in ("dependents", "both"):
-            result["dependents"] = await _traverse(session, identifier, incoming_register_deps, depth)
+            result["dependents"] = await traverse_incoming_register_deps(session, identifier, depth)
         return result
