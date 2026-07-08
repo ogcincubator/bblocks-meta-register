@@ -33,7 +33,10 @@
         target="_blank"
       >{{ org.url }}</a>
 
-      <p class="text-base mt-4">
+      <p
+        v-if="org.description"
+        class="text-base mt-4"
+      >
         {{ org.description }}
       </p>
 
@@ -66,7 +69,7 @@
           lines="two"
           :subtitle="register.register_url"
           :title="register.name"
-          :to="`/registers/${register.id}`"
+          :to="`/orgs/${orgId}/registers/${register.id.split('/')[1]}`"
         />
       </v-list>
     </template>

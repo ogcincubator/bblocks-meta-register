@@ -1,7 +1,7 @@
 <template>
   <v-list-item
     lines="two"
-    :to="`/bblocks/${bblock.id}`"
+    :to="`/orgs/${bblock.register_id.split('/')[0]}/registers/${bblock.register_id.split('/')[1]}/bblocks/${bblock.id}`"
   >
     <template #title>
       <div class="flex flex-col sm:flex-row sm:gap-2 truncate">

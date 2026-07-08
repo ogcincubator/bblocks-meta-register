@@ -106,8 +106,9 @@
   }
 
   function linkFor (nodeId: string, registerId: string | null): string | null {
-    if (props.nodeType === 'bblock') return `/bblocks/${nodeId}`
-    return registerId ? `/registers/${registerId}` : null
+    if (!registerId) return null
+    const [org, register] = registerId.split('/')
+    return props.nodeType === 'bblock' ? `/orgs/${org}/registers/${register}/bblocks/${nodeId}` : `/orgs/${org}/registers/${register}`
   }
 
   interface LayoutNode {
