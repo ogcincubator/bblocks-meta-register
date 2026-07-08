@@ -3,16 +3,21 @@
     <v-app-bar>
       <v-app-bar-title>
         <NuxtLink
-          class="no-underline"
+          class="flex items-center gap-3 no-underline"
           to="/"
         >
+          <img
+            alt="OGC"
+            class="h-7 w-auto shrink-0 dark:brightness-0 dark:invert"
+            src="~/assets/images/ogc-logo.svg"
+          >
           OGC Building Blocks Meta-Registry
         </NuxtLink>
       </v-app-bar-title>
 
       <v-text-field
         v-model="query"
-        class="mx-4 hidden md:flex"
+        class="mx-4 md:grid"
         density="compact"
         flat
         hide-details

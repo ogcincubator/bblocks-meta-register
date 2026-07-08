@@ -126,6 +126,8 @@
 
   const { data, status: fetchStatus, error } = useApi<BblockListResponse>('/bblocks', { query: queryParams })
 
+  useHead({ title: 'Search' })
+
   const pageCount = computed(() => (data.value ? Math.max(1, Math.ceil(data.value.numberMatched / limit)) : 1))
 
   watch([q, itemClass, statusFilter], () => {

@@ -139,4 +139,6 @@
 
   const { data: register, status, error } = useApi<RegisterDetail>(`/registers/${orgId}/${registerName}`)
   const { data: graph } = useApi<DependencyGraphData>(`/registers/${orgId}/${registerName}/graph`, { query: { depth: 2 } })
+
+  useHead({ title: () => register.value?.name ?? registerName })
 </script>

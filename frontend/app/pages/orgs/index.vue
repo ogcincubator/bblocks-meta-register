@@ -54,4 +54,6 @@
   import type { OrgSummary } from '~/types/api'
 
   const { data: orgs, status, error } = useApi<OrgSummary[]>('/orgs')
+
+  useHead({ title: 'Organizations' })
 </script>

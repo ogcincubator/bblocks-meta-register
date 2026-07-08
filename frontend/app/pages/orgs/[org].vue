@@ -80,4 +80,6 @@
   const orgId = route.params.org as string
 
   const { data: org, status, error } = useApi<OrgDetail>(`/orgs/${orgId}`)
+
+  useHead({ title: () => org.value?.name ?? orgId })
 </script>

@@ -179,4 +179,6 @@
 
   const { data: bblock, status, error } = useApi<BblockDetail>(`/bblocks/${identifier}`)
   const { data: graph } = useApi<DependencyGraphData>(`/bblocks/${identifier}/graph`, { query: { depth: 2 } })
+
+  useHead({ title: () => bblock.value?.name ?? identifier })
 </script>
