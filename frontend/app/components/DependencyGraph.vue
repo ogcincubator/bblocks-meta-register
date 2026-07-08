@@ -90,6 +90,8 @@
   })
 
   const router = useRouter()
+  const theme = useTheme()
+  const labelColor = computed(() => theme.current.value.dark ? '#e0e0e0' : '#1a1a1a')
   const networkGraph = ref<InstanceType<typeof VNetworkGraph> | null>(null)
 
   const colors = {
@@ -188,6 +190,7 @@
       },
       label: {
         directionAutoAdjustment: true,
+        color: labelColor.value,
       },
     },
     edge: {
@@ -204,6 +207,7 @@
       },
       label: {
         fontSize: 9,
+        color: labelColor.value,
       },
     },
   }))
