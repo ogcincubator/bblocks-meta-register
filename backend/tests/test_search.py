@@ -188,6 +188,27 @@ async def test_hybrid_search_strict_skips_semantic_pass_entirely(db_session, emb
     assert hits[0].matched_chunk_types == []
 
 
+async def test_hybrid_search_falls_back_to_keyword_only_when_embedding_provider_fails(
+    db_session, embedding_provider
+):
+    await keyword_index.upsert(
+        db_session, bblock_id="kw-only", register_id="ogc/main", org="ogc", item_class=None,
+        status=None, name="Sensor thing", abstract="a sensor observation", tags=[],
+    )
+    await db_session.commit()
+
+    class FailingEmbeddingProvider:
+        async def embed_documents(self, texts):
+            raise AssertionError("not used by hybrid_search")
+
+        async def embed_query(self, text):
+            raise httpx.ConnectError("Ollama unreachable")
+
+    hits, total = await hybrid_search(db_session, FailingEmbeddingProvider(), "sensor", org="ogc", limit=10)
+    assert [h.bblock_id for h in hits] == ["kw-only"]
+    assert total == 1
+
+
 async def test_hybrid_search_applies_filters_before_merge(db_session, embedding_provider):
     await keyword_index.upsert(
         db_session, bblock_id="b1", register_id="ogc/main", org="ogc", item_class="schema",

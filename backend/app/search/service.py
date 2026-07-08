@@ -17,6 +17,7 @@ just contributes nothing for a query like that, rather than actively hurting it.
 want fast, precise, keyword-only matching instead.
 """
 
+import logging
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.search import keyword_index, vector_store
 from app.search.embeddings import EmbeddingProvider
+
+logger = logging.getLogger(__name__)
 
 # The chunk types a direct bblock search considers -- register_summary chunks are deliberately
 # excluded here (doc 03: searched separately for register-level results, not /bblocks).
@@ -48,6 +51,17 @@ def _semantic_score(distance: float) -> float:
     """Vector table uses cosine distance (0 = identical, 2 = opposite) -- clamp to [0, 1]
     since a merged/ranked score below 0 has no meaningful interpretation here."""
     return max(0.0, 1.0 - distance)
+
+
+def _keyword_only_results(
+    keyword_scores: dict[str, float], offset: int, limit: int
+) -> tuple[list[SearchHit], int]:
+    merged = [
+        SearchHit(bblock_id=bblock_id, score=score, matched_chunk_types=[])
+        for bblock_id, score in keyword_scores.items()
+    ]
+    merged.sort(key=lambda hit: hit.score, reverse=True)
+    return merged[offset : offset + limit], len(merged)
 
 
 async def hybrid_search(
@@ -76,24 +90,26 @@ async def hybrid_search(
     keyword_scores = {hit.bblock_id: _keyword_score(hit.score) for hit in keyword_hits}
 
     if strict:
-        merged = [
-            SearchHit(bblock_id=bblock_id, score=score, matched_chunk_types=[])
-            for bblock_id, score in keyword_scores.items()
-        ]
-        merged.sort(key=lambda hit: hit.score, reverse=True)
-        return merged[offset : offset + limit], len(merged)
+        return _keyword_only_results(keyword_scores, offset, limit)
 
-    query_embedding = await embedding_provider.embed_query(query)
-    semantic_hits = await vector_store.search(
-        session,
-        query_embedding,
-        settings.search_semantic_candidates,
-        chunk_types=BBLOCK_CHUNK_TYPES,
-        org=org,
-        register_url=register_url,
-        item_class=item_class,
-        status=status,
-    )
+    try:
+        query_embedding = await embedding_provider.embed_query(query)
+        semantic_hits = await vector_store.search(
+            session,
+            query_embedding,
+            settings.search_semantic_candidates,
+            chunk_types=BBLOCK_CHUNK_TYPES,
+            org=org,
+            register_url=register_url,
+            item_class=item_class,
+            status=status,
+        )
+    except Exception:
+        # Semantic search now dominates the default ranking (see module docstring), so it
+        # matters that a down/unreachable embedding provider degrades to keyword-only results
+        # rather than 500ing a request the keyword pass alone could have partially answered.
+        logger.exception("Semantic search unavailable, falling back to keyword-only results")
+        return _keyword_only_results(keyword_scores, offset, limit)
 
     # Best (lowest-distance) chunk per bblock wins; matched_chunk_types collects every chunk
     # type that showed up for that bblock among the semantic candidates.
