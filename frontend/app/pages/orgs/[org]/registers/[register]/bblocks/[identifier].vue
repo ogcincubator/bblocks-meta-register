@@ -58,12 +58,11 @@
         {{ bblock.id }}
       </p>
 
-      <p
+      <MarkdownText
         v-if="bblock.abstract"
         class="text-base mb-4"
-      >
-        {{ bblock.abstract }}
-      </p>
+        :text="bblock.abstract"
+      />
 
       <div
         v-if="bblock.tags.length > 0"

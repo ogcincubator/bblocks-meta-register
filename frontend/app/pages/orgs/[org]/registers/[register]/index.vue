@@ -30,12 +30,11 @@
         {{ register.org_id }}
       </p>
 
-      <p
+      <MarkdownText
         v-if="register.description"
         class="text-base mb-4"
-      >
-        {{ register.description }}
-      </p>
+        :text="register.description"
+      />
 
       <div class="flex flex-wrap gap-2 mb-6">
         <v-btn

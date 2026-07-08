@@ -33,12 +33,11 @@
         target="_blank"
       >{{ org.url }}</a>
 
-      <p
+      <MarkdownText
         v-if="org.description"
         class="text-base mt-4"
-      >
-        {{ org.description }}
-      </p>
+        :text="org.description"
+      />
 
       <v-list
         v-if="org.maintainers.length > 0"
