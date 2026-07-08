@@ -32,6 +32,12 @@ async def list_bblocks_endpoint(
     org: str | None = None,
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    strict: bool = Query(
+        default=False,
+        description="Keyword-only matching, skipping semantic search entirely. Default (false) "
+        "weights semantic search higher since q is often a natural-language use-case description "
+        "rather than a curated set of keywords.",
+    ),
 ) -> BblockListResponse:
     if q:
         return await _search_bblocks(
@@ -44,6 +50,7 @@ async def list_bblocks_endpoint(
             org=org,
             limit=limit,
             offset=offset,
+            strict=strict,
         )
 
     items, total = await list_bblocks(
@@ -70,6 +77,7 @@ async def _search_bblocks(
     org: str | None,
     limit: int,
     offset: int,
+    strict: bool,
 ) -> BblockListResponse:
     register_url = await get_register_url(session, register) if register is not None else None
 
@@ -84,6 +92,7 @@ async def _search_bblocks(
         status=status,
         limit=limit,
         offset=offset,
+        strict=strict,
     )
 
     bblocks_by_id = await get_bblocks_by_ids(session, [hit.bblock_id for hit in hits])

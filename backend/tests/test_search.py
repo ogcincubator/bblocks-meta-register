@@ -136,6 +136,58 @@ async def test_hybrid_search_merges_keyword_and_semantic_and_ranks_keyword_hit_f
     assert hits[0].matched_chunk_types == ["bblock_core"]
 
 
+async def test_hybrid_search_weights_semantic_higher_than_keyword_by_default(db_session, embedding_provider):
+    # Both bblocks match "geo" via FTS equally; only "geo-and-feature" also has a chunk whose
+    # fake embedding fires the "geo"/"feature" query dimensions -- default (non-strict) merging
+    # should rank it above the keyword-only-equivalent match because semantic dominates the sum.
+    await keyword_index.upsert(
+        db_session, bblock_id="kw-equal-1", register_id="ogc/main", org="ogc", item_class=None,
+        status=None, name="geo", abstract="geo", tags=[],
+    )
+    await keyword_index.upsert(
+        db_session, bblock_id="geo-and-feature", register_id="ogc/main", org="ogc", item_class=None,
+        status=None, name="geo", abstract="geo", tags=[],
+    )
+    await vector_store.upsert_chunks(
+        db_session,
+        [Chunk(
+            key="bblock_core:geo-and-feature", text="a geo feature", chunk_type="bblock_core",
+            org="ogc", register_url="https://x/r.json", bblock_id="geo-and-feature",
+        )],
+        await embedding_provider.embed_documents(["a geo feature"]),
+    )
+    await db_session.commit()
+
+    hits, total = await hybrid_search(db_session, embedding_provider, "geo", org="ogc", limit=10)
+    assert total == 2
+    assert [h.bblock_id for h in hits] == ["geo-and-feature", "kw-equal-1"]
+
+
+async def test_hybrid_search_strict_skips_semantic_pass_entirely(db_session, embedding_provider):
+    await keyword_index.upsert(
+        db_session, bblock_id="kw-only", register_id="ogc/main", org="ogc", item_class=None,
+        status=None, name="Sensor thing", abstract="a sensor observation", tags=[],
+    )
+    await vector_store.upsert_chunks(
+        db_session,
+        [Chunk(
+            key="bblock_core:sem-only", text="a geo feature", chunk_type="bblock_core",
+            org="ogc", register_url="https://x/r.json", bblock_id="sem-only",
+        )],
+        await embedding_provider.embed_documents(["a geo feature"]),
+    )
+    await db_session.commit()
+
+    hits, total = await hybrid_search(
+        db_session, embedding_provider, "geo feature", org="ogc", limit=10, strict=True
+    )
+    assert total == 0  # keyword pass requires every token; neither is in kw-only's indexed text
+
+    hits, total = await hybrid_search(db_session, embedding_provider, "sensor", org="ogc", limit=10, strict=True)
+    assert [h.bblock_id for h in hits] == ["kw-only"]
+    assert hits[0].matched_chunk_types == []
+
+
 async def test_hybrid_search_applies_filters_before_merge(db_session, embedding_provider):
     await keyword_index.upsert(
         db_session, bblock_id="b1", register_id="ogc/main", org="ogc", item_class="schema",

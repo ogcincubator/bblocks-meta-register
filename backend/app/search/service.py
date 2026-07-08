@@ -7,6 +7,14 @@ so semantic_score is used unboosted for now.
 Query-side filters (org, register, item_class, status) are applied identically to both passes
 *before* merging, per doc 03 -- applying them post-merge would let each pass's own candidate-N
 cutoff discard results that would otherwise have survived filtering.
+
+Default (non-strict) merging weights the semantic pass heavily (settings.search_semantic_weight):
+real queries here are as often a paragraph-length, possibly non-English description of a use
+case as they are a couple of keywords, and only the embedding-based pass actually understands
+that kind of input -- the keyword pass's strict per-token AND (see keyword_index._sanitize_query)
+just contributes nothing for a query like that, rather than actively hurting it. `strict=True`
+(the API's `strict=1`) skips the semantic pass and embedding call entirely, for callers that
+want fast, precise, keyword-only matching instead.
 """
 
 from dataclasses import dataclass
@@ -54,6 +62,7 @@ async def hybrid_search(
     status: str | None = None,
     limit: int = 20,
     offset: int = 0,
+    strict: bool = False,
 ) -> tuple[list[SearchHit], int]:
     keyword_hits = await keyword_index.search(
         session,
@@ -64,6 +73,15 @@ async def hybrid_search(
         item_class=item_class,
         status=status,
     )
+    keyword_scores = {hit.bblock_id: _keyword_score(hit.score) for hit in keyword_hits}
+
+    if strict:
+        merged = [
+            SearchHit(bblock_id=bblock_id, score=score, matched_chunk_types=[])
+            for bblock_id, score in keyword_scores.items()
+        ]
+        merged.sort(key=lambda hit: hit.score, reverse=True)
+        return merged[offset : offset + limit], len(merged)
 
     query_embedding = await embedding_provider.embed_query(query)
     semantic_hits = await vector_store.search(
@@ -89,21 +107,18 @@ async def hybrid_search(
             best_distance[hit.bblock_id] = hit.distance
 
     semantic_scores = {bblock_id: _semantic_score(distance) for bblock_id, distance in best_distance.items()}
-    keyword_scores = {hit.bblock_id: _keyword_score(hit.score) for hit in keyword_hits}
 
+    semantic_weight = settings.search_semantic_weight
     all_bblock_ids = set(keyword_scores) | set(semantic_scores)
-    merged: list[SearchHit] = []
-    for bblock_id in all_bblock_ids:
-        semantic = semantic_scores.get(bblock_id, 0.0)
-        keyword = keyword_scores.get(bblock_id)
-        score = max(keyword, semantic) if keyword is not None else semantic
-        merged.append(
-            SearchHit(
-                bblock_id=bblock_id,
-                score=score,
-                matched_chunk_types=sorted(matched_chunk_types.get(bblock_id, set())),
-            )
+    merged = [
+        SearchHit(
+            bblock_id=bblock_id,
+            score=semantic_weight * semantic_scores.get(bblock_id, 0.0)
+            + (1 - semantic_weight) * keyword_scores.get(bblock_id, 0.0),
+            matched_chunk_types=sorted(matched_chunk_types.get(bblock_id, set())),
         )
+        for bblock_id in all_bblock_ids
+    ]
 
     merged.sort(key=lambda hit: hit.score, reverse=True)
     return merged[offset : offset + limit], len(merged)

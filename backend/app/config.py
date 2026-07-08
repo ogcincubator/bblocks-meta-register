@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     embedding_batch_size: int = 64
     search_keyword_candidates: int = 50
     search_semantic_candidates: int = 50
+    # Users mostly describe a use case in natural language (often not English), not a curated
+    # set of keywords -- the semantic pass is what actually understands that, so it dominates
+    # the default (non-strict) hybrid merge; the keyword pass is a boost on top, not a gate.
+    search_semantic_weight: float = 0.75
 
     @property
     def database_url(self) -> str:
