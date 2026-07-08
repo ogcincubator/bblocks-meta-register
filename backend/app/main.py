@@ -9,10 +9,11 @@ from fastapi.responses import JSONResponse
 
 from app.api import admin, bblocks, orgs, registers
 from app.db.migrate import run_migrations_to_head
+from app.logging_config import configure_logging
 from app.mcp.server import mcp
 from app.scheduler import crawl_loop
 
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 # streamable_http_app() must be called before mcp.session_manager is accessible (it lazily
@@ -21,27 +22,10 @@ logger = logging.getLogger(__name__)
 mcp_app = mcp.streamable_http_app()
 
 
-def _reenable_app_loggers() -> None:
-    """Two separate things disable our `app.*` module-level loggers on every startup, both via
-    `logging.config.fileConfig`/`dictConfig`'s default `disable_existing_loggers=True` (which
-    disables every already-instantiated logger not in the config being applied):
-
-    1. `fastapi dev`/uvicorn imports this module (instantiating all `app.*` loggers) before
-       uvicorn builds its Config and runs configure_logging().
-    2. `run_migrations_to_head()` -> Alembic's env.py calls `fileConfig(alembic.ini)`, which
-       runs *after* this function's first call in lifespan() below and disables them again.
-
-    Hence this must run again after migrations, not just once before them."""
-    for name, logger_obj in logging.root.manager.loggerDict.items():
-        if name.startswith("app") and isinstance(logger_obj, logging.Logger):
-            logger_obj.disabled = False
-
-
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    _reenable_app_loggers()
     await asyncio.to_thread(run_migrations_to_head)
-    _reenable_app_loggers()
+    configure_logging()  # undo Alembic's fileConfig() re-disabling app.* loggers, see module docstring
     task = asyncio.create_task(crawl_loop())
     # Starlette's Mount only forwards "http"/"websocket" ASGI scopes to a sub-app, never
     # "lifespan" (see Mount.matches), so the MCP session manager's lifespan has to be entered
