@@ -22,8 +22,8 @@ async def _seed_org_and_register(session, org_id="ogc", register_id="ogc/main"):
         register_url="https://example.org/register.json",
         viewer_url=None,
         description=None,
-        modified="2026-01-01T00:00:00Z",
     )
+    await registers_repo.set_register_modified(session, register_id, "2026-01-01T00:00:00Z")
     await session.commit()
 
 

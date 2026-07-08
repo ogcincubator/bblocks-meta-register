@@ -83,7 +83,6 @@ async def index_register(session: AsyncSession, register_info: RegisterInfo, reg
         register_url=register_info.register_url,
         viewer_url=register_json.get("viewerURL"),
         description=register_json.get("abstract") or register_json.get("description"),
-        modified=register_json.get("modified"),
     )
 
     # Full replace: this register's own bblocks are cleared first, so any owner found below

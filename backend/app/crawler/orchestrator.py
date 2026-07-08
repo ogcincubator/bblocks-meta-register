@@ -19,7 +19,7 @@ from app.crawler.register_fetch import fetch_register
 from app.db.base import session_scope
 from app.repositories.crawl_status import finish_run, start_run
 from app.repositories.orgs import upsert_org
-from app.repositories.registers import get_register_modified, record_crawl_result
+from app.repositories.registers import get_register_modified, record_crawl_result, set_register_modified
 from app.search.embeddings import get_embedding_provider
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,10 @@ async def _crawl_one_register(client, semaphore: asyncio.Semaphore, register_inf
 
             async with session_scope() as session:
                 await write_search_content(session, register_info, chunks, embeddings, accepted_bblocks)
+                # Only advance the change-detection field once the whole pipeline (relational
+                # rows above + search content just written) has succeeded -- see
+                # set_register_modified() for why this can't happen inside index_register().
+                await set_register_modified(session, register_info.register_id, fetched_modified)
                 await record_crawl_result(session, register_info.register_id, status="ok")
                 await finish_run(session, run_id, status="ok")
                 await session.commit()

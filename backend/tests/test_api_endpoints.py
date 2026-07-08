@@ -14,7 +14,7 @@ async def _seed(db_session):
     await upsert_org(
         db_session, org_id="ogc", name="OGC", description="desc", url="https://ogc.org", maintainers=[]
     )
-    from app.repositories.registers import upsert_register
+    from app.repositories.registers import set_register_modified, upsert_register
 
     await upsert_register(
         db_session,
@@ -24,8 +24,8 @@ async def _seed(db_session):
         register_url="https://example.org/register.json",
         viewer_url="https://example.org/viewer/",
         description="Main register",
-        modified="2026-01-01T00:00:00Z",
     )
+    await set_register_modified(db_session, "ogc/main", "2026-01-01T00:00:00Z")
     register_info = RegisterInfo(register_id="ogc/main", org_id="ogc", name="main", register_url="https://example.org/register.json")
     await index_register(
         db_session,

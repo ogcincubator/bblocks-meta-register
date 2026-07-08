@@ -60,8 +60,10 @@ async def upsert_register(
     register_url: str,
     viewer_url: str | None,
     description: str | None,
-    modified: str | None,
 ) -> Register:
+    """Note: does *not* touch `modified` -- that's the change-detection field, and it must only
+    be advanced once the *entire* crawl pipeline for this register (relational indexing +
+    search-content indexing) has succeeded. See set_register_modified()."""
     register = await session.get(Register, register_id)
     if register is None:
         register = Register(id=register_id)
@@ -71,8 +73,19 @@ async def upsert_register(
     register.register_url = register_url
     register.viewer_url = viewer_url
     register.description = description
-    register.modified = modified
     return register
+
+
+async def set_register_modified(session: AsyncSession, register_id: str, modified: str | None) -> None:
+    """Advances the change-detection field once a crawl of this register has fully succeeded
+    (relational rows *and* search content committed) -- called at the very end of
+    _crawl_one_register(), never from index_register(), so a failure partway through the
+    pipeline (e.g. Ollama unreachable during embedding) leaves `modified` at its old value and
+    the register is retried on the next crawl cycle instead of being wrongly skipped as
+    unchanged."""
+    register = await session.get(Register, register_id)
+    if register is not None:
+        register.modified = modified
 
 
 async def record_crawl_result(

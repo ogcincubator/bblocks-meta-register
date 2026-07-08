@@ -6,7 +6,7 @@ from app.repositories.bblocks import get_bblock
 from app.repositories.conflicts import list_conflicts
 from app.repositories.deps import outgoing_bblock_deps, outgoing_register_deps
 from app.repositories.orgs import upsert_org
-from app.repositories.registers import get_register, upsert_register
+from app.repositories.registers import get_register, set_register_modified, upsert_register
 
 
 def make_register_json(*bblocks: dict, modified: str = "2026-01-01T00:00:00Z") -> dict:
@@ -69,8 +69,29 @@ async def test_index_register_full_replace_and_presence_flags(db_session):
 
     assert await get_bblock(db_session, "ogc.main.a") is None
     assert await get_bblock(db_session, "ogc.main.c") is not None
+
+    # index_register() itself must never advance `modified` -- only set_register_modified()
+    # does, once the caller confirms the *whole* crawl pipeline (including search-content
+    # indexing) succeeded. Otherwise a failure after index_register() but before search
+    # content is written would be wrongly treated as "already up to date" on the next crawl.
     register = await get_register(db_session, "ogc/main")
-    assert register.modified == "2026-02-01T00:00:00Z"
+    assert register.modified is None
+
+
+async def test_set_register_modified_advances_change_detection_field(db_session):
+    await _seed_register(db_session)
+    register_info = RegisterInfo(register_id="ogc/main", org_id="ogc", name="main", register_url="https://x/r.json")
+    await index_register(db_session, register_info, make_register_json())
+    await db_session.commit()
+
+    register = await get_register(db_session, "ogc/main")
+    assert register.modified is None
+
+    await set_register_modified(db_session, "ogc/main", "2026-01-01T00:00:00Z")
+    await db_session.commit()
+
+    register = await get_register(db_session, "ogc/main")
+    assert register.modified == "2026-01-01T00:00:00Z"
 
 
 async def test_index_register_rejects_identifier_conflict(db_session):
@@ -84,7 +105,6 @@ async def test_index_register_rejects_identifier_conflict(db_session):
         register_url="https://acme/r.json",
         viewer_url=None,
         description=None,
-        modified=None,
     )
     await db_session.commit()
 
@@ -121,7 +141,6 @@ async def test_index_register_rolls_up_register_deps(db_session):
         register_url="https://acme/r.json",
         viewer_url=None,
         description=None,
-        modified=None,
     )
     await db_session.commit()
 
