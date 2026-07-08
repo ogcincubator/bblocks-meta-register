@@ -143,6 +143,8 @@ async def build_register_chunks(
         item_class = raw_bblock.get("itemClass")
         status = raw_bblock.get("status")
 
+        logger.info("Fetching search content for bblock %s (register %s)", bblock_id, register_info.register_id)
+
         core_text = _bblock_core_text(raw_bblock)
         if core_text:
             chunks.append(

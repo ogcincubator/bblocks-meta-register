@@ -73,6 +73,7 @@ async def index_register(session: AsyncSession, register_info: RegisterInfo, reg
     this to keep the FTS5/vector indexes limited to the same set of bblocks as the relational
     tables, rather than re-deriving accepted-ness itself."""
     register_id = register_info.register_id
+    logger.info("Indexing %d bblocks for register %s", len(register_json.get("bblocks", [])), register_id)
 
     await upsert_register(
         session,
@@ -149,29 +150,42 @@ async def index_register(session: AsyncSession, register_info: RegisterInfo, reg
     return indexed_ids
 
 
-async def index_search_content(
-    session: AsyncSession,
+async def build_search_content(
     client: httpx.AsyncClient,
     embedding_provider: EmbeddingProvider,
     register_info: RegisterInfo,
     register_json: dict,
     indexed_ids: list[str],
-) -> None:
-    """Full-replace of this register's FTS5 keyword rows and vector chunks (docs/03's "when a
-    register's content hash changes, that register's data is fully replaced" -- applies to the
-    search indexes the same way it applies to the relational rows in index_register() above).
-    Only bblocks in `indexed_ids` (i.e. not rejected for an identifier conflict) are indexed.
-    """
-    await vector_store.delete_by_register(session, register_info.register_url)
-    await keyword_index.delete_by_register(session, register_info.register_id)
-
+) -> tuple[list, list[list[float]], list[dict]]:
+    """Network-only half of search-content indexing (chunk fetching + embedding calls) -- kept
+    separate from write_search_content() below so callers can run it *outside* the DB session
+    lock (see app/crawler/orchestrator.py): both are slow, non-DB I/O, and holding the
+    app-wide `_db_lock` (app/db/base.py) across them serializes unrelated API reads (e.g.
+    /orgs) behind however long Ollama/register-content fetches take, not just DB writes."""
     indexed_ids_set = set(indexed_ids)
     accepted_bblocks = [b for b in register_json.get("bblocks", []) if b.get("itemIdentifier") in indexed_ids_set]
     filtered_register_json = {**register_json, "bblocks": accepted_bblocks}
 
     chunks = await build_register_chunks(client, register_info, filtered_register_json)
+    embeddings = await embedding_provider.embed_documents([chunk.text for chunk in chunks]) if chunks else []
+    return chunks, embeddings, accepted_bblocks
+
+
+async def write_search_content(
+    session: AsyncSession,
+    register_info: RegisterInfo,
+    chunks: list,
+    embeddings: list[list[float]],
+    accepted_bblocks: list[dict],
+) -> None:
+    """Full-replace of this register's FTS5 keyword rows and vector chunks (docs/03's "when a
+    register's content hash changes, that register's data is fully replaced" -- applies to the
+    search indexes the same way it applies to the relational rows in index_register() above).
+    DB-only (see build_search_content() above for the network half)."""
+    await vector_store.delete_by_register(session, register_info.register_url)
+    await keyword_index.delete_by_register(session, register_info.register_id)
+
     if chunks:
-        embeddings = await embedding_provider.embed_documents([chunk.text for chunk in chunks])
         await vector_store.upsert_chunks(session, chunks, embeddings)
 
     for raw_bblock in accepted_bblocks:
