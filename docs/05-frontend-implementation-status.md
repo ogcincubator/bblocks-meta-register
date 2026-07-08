@@ -66,8 +66,8 @@ from the code. Broad strokes only — read the doc above and the code itself for
 
 - **Visual identity** — this is intentionally the stock Vuetify theme (default Material-ish look, no brand colors/
   typography/spacing customization yet), per the explicit "standard Vuetify first" direction this was built under.
-- **Admin surface** — `/admin/status` and `/admin/conflicts` (doc 02) have no frontend views; only the public
-  browse/search surface is built.
+- **Admin surface** — `/admin/status`, `/admin/registers`, and `/admin/conflicts` (doc 02) have no frontend views;
+  only the public browse/search surface is built.
 - **Dependency graph visualization** — depends-on/dependents are rendered as flat chip lists, not the "graph" doc
   02 mentions as an option for the register view.
 - **No generated API client / OpenAPI sync check** — `types/api.ts` will silently drift if the backend schemas

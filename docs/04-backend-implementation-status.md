@@ -9,17 +9,29 @@ from the code. Broad strokes only — read the docs above and the code itself fo
 - **Data model**: `orgs` → `registers` → `bblocks` hierarchy as SQLAlchemy ORM (real FKs, relationships), plus
   `bblock_deps`/`register_deps`/`identifier_conflicts`/`crawl_runs` as plain SQLAlchemy Core tables (no FK on the
   dependency edges' target side, by design — see doc 02's "Identifier conflicts" and dependency graph sections).
-  Migrations via Alembic, single revision `0001_initial.py` (see "Migration convention" below).
-- **Crawler**: full pipeline per doc 02 minus embeddings — discovery (`meta-register.json`/`meta-register-orgs.json`),
+  Migrations via Alembic, two revisions: `0001_initial.py` and `0002_register_status.py` (see "Migration
+  convention" below). `Register` also has an admin-only `status` field (`pending`/`crawling`/`ready`/`failed`,
+  distinct from the public `last_crawl_status`) — see "Crawler" below.
+- **Crawler**: full pipeline per doc 02 including embeddings — discovery (`meta-register.json`/`meta-register-orgs.json`),
   per-register fetch, change detection (`modified` timestamp equality), full-replace indexing (relational rows +
-  dependency edges + identifier-conflict rejection), orphan cleanup, per-host throttling/backoff, bounded worker
-  pool, failure isolation. Scheduled via a plain `asyncio` loop (`app/scheduler.py`), not a cron library — see that
-  file's docstring for why.
+  dependency edges + identifier-conflict rejection), search-content indexing (chunking + embeddings, see "Hybrid
+  search" below), orphan cleanup, per-host throttling/backoff, bounded worker pool, failure isolation. Scheduled via
+  a plain `asyncio` loop (`app/scheduler.py`), not a cron library — see that file's docstring for why.
+  - `Register.modified` (the change-detection timestamp) is only advanced once the *entire* per-register pipeline
+    succeeds — relational indexing (`index_register`) **and** search-content indexing (`write_search_content`) —
+    via `set_register_modified()` (`app/repositories/registers.py`), called at the very end of
+    `_crawl_one_register` (`app/crawler/orchestrator.py`). Originally `index_register` wrote `modified` itself,
+    right after committing the relational rows and before the slow embedding step ran; a failure in that later step
+    (e.g. Ollama unreachable) left `modified` already advanced, so the next crawl cycle wrongly treated the register
+    as unchanged and skipped it forever, silently missing search-content updates. Fixed by deferring the write.
+  - `Register.status` is set to `"crawling"` for the duration of a run (`mark_register_crawling`) and to
+    `"ready"`/`"failed"` once `record_crawl_result` runs — visible via `GET /admin/registers`, never exposed on the
+    public register endpoints or MCP.
 - **API**: `/orgs`, `/registers`, `/bblocks` (list + detail, with outgoing/incoming dependency edges), `/admin/status`,
-  `/admin/conflicts`, `/admin/reindex` — matches doc 02's endpoint table. `/admin/*` requires an `X-Admin-Api-Key`
-  header if `BBLOCKS_ADMIN_API_KEY` is set (unset = unprotected, fine for local dev only). `CORSMiddleware` allows
-  any origin on GET requests (`app/main.py`) — safe to leave permissive since the API is public/read-only by design,
-  and it's what lets the frontend (see doc 05) call it directly without a dev proxy.
+  `/admin/registers`, `/admin/conflicts`, `/admin/reindex` — matches doc 02's endpoint table. `/admin/*` requires an
+  `X-Admin-Api-Key` header if `BBLOCKS_ADMIN_API_KEY` is set (unset = unprotected, fine for local dev only).
+  `CORSMiddleware` allows any origin on GET requests (`app/main.py`) — safe to leave permissive since the API is
+  public/read-only by design, and it's what lets the frontend (see doc 05) call it directly without a dev proxy.
 - **`GET /bblocks?q=`** is doc 03's hybrid search (see below), not the earlier `LIKE` placeholder.
 - **MCP server** (`app/mcp/server.py`, doc 02's "MCP interface" section): mounted at `/mcp` on the same FastAPI
   app/process (not a separate server) via the official `mcp` Python SDK's streamable-HTTP ASGI app, so it shares
@@ -68,10 +80,15 @@ Doc 03's keyword + semantic hybrid search, minus ontology-term boosting (see "Wh
   `register`, `item_class`, `status`) apply identically to both passes before merging. Candidate pool size per pass
   is bounded (`BBLOCKS_SEARCH_KEYWORD_CANDIDATES`/`BBLOCKS_SEARCH_SEMANTIC_CANDIDATES`, default 50 each) — at
   larger result-set sizes this could under-fill a requested page past the candidate pool; untested at that scale.
-- Wired into the crawler: `app/crawler/indexer.py::index_search_content`, called from the orchestrator right after
-  the relational `index_register`, in the same per-register try/except — an embedding-provider failure (e.g.
-  Ollama unreachable) currently fails that register's whole crawl run, relational rows included, not just the
-  search indexes. Full-replace per register, same as the relational tables.
+- Wired into the crawler as two halves, split across `app/crawler/indexer.py`: `build_search_content` (network-only
+  — register content fetches + embedding calls) and `write_search_content` (DB-only). The orchestrator
+  (`_crawl_one_register`) runs `build_search_content` *outside* `session_scope()`, after committing the relational
+  rows from `index_register` in their own transaction — so an embedding-provider failure (e.g. Ollama unreachable)
+  no longer rolls back the relational rows, and no longer holds the app-wide DB lock across the slow network/embed
+  calls. It's still one per-register try/except overall, and a failure anywhere in it (relational or search-content
+  half) is recorded via `record_crawl_result(status="error")` and leaves `Register.modified` at its old value (see
+  "Crawler" above), so the register is retried in full on the next crawl cycle. Full-replace per register, same as
+  the relational tables.
 
 ## What's deferred (not started)
 
@@ -146,8 +163,10 @@ Doc 03's keyword + semantic hybrid search, minus ontology-term boosting (see "Wh
   regardless. Rolled a `BBLOCKS_MCP_ALLOWED_HOSTS`/`BBLOCKS_MCP_ALLOWED_ORIGINS`-driven `TransportSecuritySettings`
   instead of relying on the SDK's construction-time default (see `app/mcp/server.py`).
 
-## Migration convention (current stage only)
+## Migration convention
 
-No real data is indexed anywhere yet, so schema changes should **amend `0001_initial.py` directly** and the dev DB
-file gets deleted/recreated, rather than stacking new revision files. Switch to normal incremental migrations once
-this is deployed somewhere with data worth preserving.
+Real data now exists in local dev DBs (a full crawl of the live meta-registry has been run and verified — see
+above), so schema changes are **normal incremental migrations** stacked as new revision files (e.g.
+`0002_register_status.py`), not amendments to `0001_initial.py`. The earlier stage of this project amended
+`0001_initial.py` directly and deleted/recreated the dev DB on every schema change; that convention no longer
+applies now that there's crawled data worth preserving across a schema change.

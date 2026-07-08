@@ -63,7 +63,12 @@ API should keep serving the last-good indexed state while a crawl is in progress
   is logged and skipped, not allowed to abort the whole crawl cycle; it's picked up again on the next
   scheduled run. A `429`/`5xx` response triggers exponential backoff on that host (part of the same
   per-host throttling mechanism, not a separate one) before the retry, rather than hammering a host that's
-  already signaling it's overloaded.
+  already signaling it's overloaded. This "picked up again next run" guarantee depends on the register's
+  `modified` change-detection timestamp only being advanced once the *entire* pipeline for that register —
+  relational indexing **and** search-content indexing — has succeeded; a partial failure (e.g. an
+  unreachable embedding provider) must not leave the timestamp advanced, or the register would be wrongly
+  treated as already up to date and never retried (see doc 04's implementation status for how this is
+  enforced).
 - **Write serialization** — SQLite allows a single writer at a time. Fetching, parsing, and embedding stay
   concurrent across the worker pool, but the actual database writes (relational rows, FTS rows, vector
   chunks) are funneled through one writer path, with the database in WAL mode so concurrent readers
@@ -181,6 +186,7 @@ public API namespace so it's easy to gate behind auth later without renaming any
 | Endpoint | Description |
 |----------|-------------|
 | `GET /admin/status` | Crawl health: last successful run per register, current in-progress crawl state, recent failures. |
+| `GET /admin/registers` | Every register's current lifecycle status (`pending`/`crawling`/`ready`/`failed`) in one list, for spotting stuck or failed registers to target via `/admin/reindex` without joining crawl run history. |
 | `GET /admin/conflicts` | Unresolved `itemIdentifier` conflicts (see [Identifier conflicts](#identifier-conflicts) above). |
 | `POST /admin/reindex` | Trigger an out-of-schedule crawl (optionally scoped to one register). |
 
