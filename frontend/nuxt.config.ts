@@ -11,9 +11,6 @@ export default defineNuxtConfig({
 
   app: {
     head: {
-      titleTemplate: (titleChunk) => titleChunk
-        ? `${titleChunk} · OGC Building Blocks Meta-Registry`
-        : 'OGC Building Blocks Meta-Registry',
       style: [
         // vuetify-nuxt-module injects component <style> tags before the CSS array runs,
         // so layer order must be declared here to arrive first in the document.
