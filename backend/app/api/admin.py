@@ -6,7 +6,15 @@ from app.api.deps import SessionDep, require_admin_key
 from app.crawler.orchestrator import run_crawl_cycle
 from app.repositories.conflicts import list_conflicts
 from app.repositories.crawl_status import latest_run_per_register, list_recent_runs
-from app.schemas.admin import AdminStatus, ConflictsResponse, CrawlRun, ReindexResponse
+from app.repositories.registers import list_registers
+from app.schemas.admin import (
+    AdminStatus,
+    ConflictsResponse,
+    CrawlRun,
+    ReindexResponse,
+    RegisterStatus,
+    RegistersStatusResponse,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin_key)])
 
@@ -19,6 +27,28 @@ async def admin_status(session: SessionDep) -> AdminStatus:
     recent = [CrawlRun(**run) for run in await list_recent_runs(session)]
     latest = {k: CrawlRun(**v) for k, v in (await latest_run_per_register(session)).items()}
     return AdminStatus(recent_runs=recent, latest_per_register=latest)
+
+
+@router.get("/registers", response_model=RegistersStatusResponse)
+async def admin_registers(session: SessionDep) -> RegistersStatusResponse:
+    """Admin-only listing of every register's lifecycle status (pending/crawling/ready/failed),
+    for spotting stuck or failed registers without joining crawl_runs -- an alternative to
+    /admin/status for deciding which register(s) to target via /admin/reindex."""
+    registers = await list_registers(session)
+    return RegistersStatusResponse(
+        registers=[
+            RegisterStatus(
+                id=r.id,
+                org_id=r.org_id,
+                status=r.status,
+                modified=r.modified,
+                last_crawled_at=r.last_crawled_at,
+                last_crawl_status=r.last_crawl_status,
+                last_error=r.last_error,
+            )
+            for r in registers
+        ]
+    )
 
 
 @router.get("/conflicts", response_model=ConflictsResponse)

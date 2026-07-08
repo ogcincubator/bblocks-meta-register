@@ -204,6 +204,24 @@ async def test_admin_status_and_reindex(api_client, monkeypatch):
     assert triggered == {"only_register_id": "ogc/main"}
 
 
+async def test_admin_registers_status(api_client, db_session):
+    await _seed(db_session)
+
+    response = await api_client.get("/admin/registers")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["registers"]) == 1
+    register = body["registers"][0]
+    assert register["id"] == "ogc/main"
+    # Never crawled via the orchestrator in this test -- still at the model's default.
+    assert register["status"] == "pending"
+
+    # The public register endpoints must never leak the admin-only `status` field.
+    response = await api_client.get("/registers/ogc/main")
+    assert response.status_code == 200
+    assert "status" not in response.json()
+
+
 async def test_admin_requires_key_when_configured(api_client, monkeypatch):
     monkeypatch.setattr("app.api.deps.settings.admin_api_key", "s3cr3t")
 

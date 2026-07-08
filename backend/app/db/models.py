@@ -35,6 +35,12 @@ class Register(Base):
     last_crawled_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_crawl_status: Mapped[str | None] = mapped_column(String, nullable=True)
     last_error: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Admin-only lifecycle status -- "pending" | "crawling" | "ready" | "failed". Distinct from
+    # last_crawl_status (which only reflects the outcome of the *last completed* attempt): this
+    # is set to "crawling" for the duration of a run, so a stuck/crashed crawl is visible as a
+    # register stuck in "crawling" rather than silently showing its last known-good status.
+    # Never exposed via the public API/MCP -- see app/api/admin.py.
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", server_default="pending")
 
     org: Mapped["Org"] = relationship(back_populates="registers")
     bblocks: Mapped[list["Bblock"]] = relationship(back_populates="register", cascade="all, delete-orphan")

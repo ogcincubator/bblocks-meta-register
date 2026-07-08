@@ -42,6 +42,29 @@ async def test_register_change_detection_field(db_session):
     assert await registers_repo.get_register_modified(db_session, "missing/register") is None
 
 
+async def test_register_status_lifecycle(db_session):
+    await _seed_org_and_register(db_session)
+    register = await registers_repo.get_register(db_session, "ogc/main")
+    assert register.status == "pending"
+
+    await registers_repo.mark_register_crawling(db_session, "ogc/main")
+    await db_session.commit()
+    register = await registers_repo.get_register(db_session, "ogc/main")
+    assert register.status == "crawling"
+
+    await registers_repo.record_crawl_result(db_session, "ogc/main", status="ok")
+    await db_session.commit()
+    register = await registers_repo.get_register(db_session, "ogc/main")
+    assert register.status == "ready"
+
+    await registers_repo.mark_register_crawling(db_session, "ogc/main")
+    await registers_repo.record_crawl_result(db_session, "ogc/main", status="error", error="boom")
+    await db_session.commit()
+    register = await registers_repo.get_register(db_session, "ogc/main")
+    assert register.status == "failed"
+    assert register.last_error == "boom"
+
+
 async def test_delete_registers_not_in_cascades_bblocks(db_session):
     await _seed_org_and_register(db_session)
     await bblocks_repo.upsert_bblock(

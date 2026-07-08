@@ -88,6 +88,16 @@ async def set_register_modified(session: AsyncSession, register_id: str, modifie
         register.modified = modified
 
 
+async def mark_register_crawling(session: AsyncSession, register_id: str) -> None:
+    """Sets the admin-only lifecycle status to "crawling" for the duration of a crawl attempt,
+    so a run that never reaches record_crawl_result() (process killed, unhandled crash outside
+    _crawl_one_register's try/except) is visible as stuck rather than silently keeping its last
+    known-good status."""
+    register = await session.get(Register, register_id)
+    if register is not None:
+        register.status = "crawling"
+
+
 async def record_crawl_result(
     session: AsyncSession, register_id: str, *, status: str, error: str | None = None
 ) -> None:
@@ -97,6 +107,7 @@ async def record_crawl_result(
     register.last_crawled_at = datetime.datetime.now(datetime.UTC)
     register.last_crawl_status = status
     register.last_error = error
+    register.status = "ready" if status == "ok" else "failed"
 
 
 async def delete_registers_not_in(session: AsyncSession, keep_ids: set[str]) -> list[str]:

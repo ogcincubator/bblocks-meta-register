@@ -19,6 +19,24 @@ class AdminStatus(BaseModel):
     latest_per_register: dict[str, CrawlRun]
 
 
+class RegisterStatus(BaseModel):
+    """Admin-only view of a register's crawl lifecycle -- includes the `status` field
+    (pending/crawling/ready/failed), which is deliberately excluded from the public
+    RegisterOut schema (app/schemas/register.py)."""
+
+    id: str
+    org_id: str
+    status: str
+    modified: str | None
+    last_crawled_at: datetime.datetime | None
+    last_crawl_status: str | None
+    last_error: str | None
+
+
+class RegistersStatusResponse(BaseModel):
+    registers: list[RegisterStatus]
+
+
 class ReindexResponse(BaseModel):
     accepted: bool
     register_id: str | None = None

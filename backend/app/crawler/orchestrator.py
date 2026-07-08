@@ -19,7 +19,12 @@ from app.crawler.register_fetch import fetch_register
 from app.db.base import session_scope
 from app.repositories.crawl_status import finish_run, start_run
 from app.repositories.orgs import upsert_org
-from app.repositories.registers import get_register_modified, record_crawl_result, set_register_modified
+from app.repositories.registers import (
+    get_register_modified,
+    mark_register_crawling,
+    record_crawl_result,
+    set_register_modified,
+)
 from app.search.embeddings import get_embedding_provider
 
 logger = logging.getLogger(__name__)
@@ -29,6 +34,7 @@ async def _crawl_one_register(client, semaphore: asyncio.Semaphore, register_inf
     async with semaphore:
         async with session_scope() as session:
             run_id = await start_run(session, register_id=register_info.register_id)
+            await mark_register_crawling(session, register_info.register_id)
             await session.commit()
 
         try:
