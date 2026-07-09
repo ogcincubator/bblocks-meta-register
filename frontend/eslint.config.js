@@ -1,8 +1,9 @@
-import vuetify from 'eslint-config-vuetify'
-import withNuxt from './.nuxt/eslint.config.mjs'
+import withNuxt from './.nuxt/eslint.config.mjs';
 
 export default withNuxt(
-  vuetify({
-    ts: true,
-  }),
-)
+  {
+    rules: {
+      curly: ['error', 'all'],
+    },
+  },
+);

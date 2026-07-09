@@ -76,12 +76,12 @@
 </template>
 
 <script lang="ts" setup>
-  import type { OrgDetail } from '~/types/api'
+import type { OrgDetail } from '~/types/api';
 
-  const route = useRoute()
-  const orgId = route.params.org as string
+const route = useRoute();
+const orgId = route.params.org as string;
 
-  const { data: org, status, error } = useApi<OrgDetail>(`/orgs/${orgId}`)
+const { data: org, status, error } = useApi<OrgDetail>(`/orgs/${orgId}`);
 
-  useHead({ title: () => org.value?.name ?? orgId })
+useHead({ title: () => org.value?.name ?? orgId });
 </script>

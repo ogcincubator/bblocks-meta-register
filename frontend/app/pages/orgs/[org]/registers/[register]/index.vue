@@ -130,14 +130,14 @@
 </template>
 
 <script lang="ts" setup>
-  import type { DependencyGraph as DependencyGraphData, RegisterDetail } from '~/types/api'
+import type { DependencyGraph as DependencyGraphData, RegisterDetail } from '~/types/api';
 
-  const route = useRoute()
-  const orgId = route.params.org as string
-  const registerName = route.params.register as string
+const route = useRoute();
+const orgId = route.params.org as string;
+const registerName = route.params.register as string;
 
-  const { data: register, status, error } = useApi<RegisterDetail>(`/registers/${orgId}/${registerName}`)
-  const { data: graph } = useApi<DependencyGraphData>(`/registers/${orgId}/${registerName}/graph`, { query: { depth: 2 } })
+const { data: register, status, error } = useApi<RegisterDetail>(`/registers/${orgId}/${registerName}`);
+const { data: graph } = useApi<DependencyGraphData>(`/registers/${orgId}/${registerName}/graph`, { query: { depth: 2 } });
 
-  useHead({ title: () => register.value?.name ?? registerName })
+useHead({ title: () => register.value?.name ?? registerName });
 </script>

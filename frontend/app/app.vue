@@ -62,17 +62,19 @@
 </template>
 
 <script lang="ts" setup>
-  useHead({
-    titleTemplate: titleChunk => titleChunk
-      ? `${titleChunk} · OGC Building Blocks Meta-Registry`
-      : 'OGC Building Blocks Meta-Registry',
-  })
+useHead({
+  titleTemplate: titleChunk => titleChunk
+    ? `${titleChunk} · OGC Building Blocks Meta-Registry`
+    : 'OGC Building Blocks Meta-Registry',
+});
 
-  const query = ref('')
-  const router = useRouter()
+const query = ref('');
+const router = useRouter();
 
-  function runSearch () {
-    if (!query.value.trim()) return
-    router.push({ path: '/search', query: { q: query.value } })
+function runSearch() {
+  if (!query.value.trim()) {
+    return;
   }
+  router.push({ path: '/search', query: { q: query.value } });
+}
 </script>

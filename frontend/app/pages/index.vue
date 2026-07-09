@@ -88,15 +88,17 @@
 </template>
 
 <script lang="ts" setup>
-  import type { OrgSummary } from '~/types/api'
+import type { OrgSummary } from '~/types/api';
 
-  const query = ref('')
-  const router = useRouter()
+const query = ref('');
+const router = useRouter();
 
-  const { data: orgs, status, error } = useApi<OrgSummary[]>('/orgs')
+const { data: orgs, status, error } = useApi<OrgSummary[]>('/orgs');
 
-  function runSearch () {
-    if (!query.value.trim()) return
-    router.push({ path: '/search', query: { q: query.value } })
+function runSearch() {
+  if (!query.value.trim()) {
+    return;
   }
+  router.push({ path: '/search', query: { q: query.value } });
+}
 </script>

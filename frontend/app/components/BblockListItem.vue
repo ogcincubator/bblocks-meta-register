@@ -54,7 +54,7 @@
 </template>
 
 <script lang="ts" setup>
-  import type { BblockSummary } from '~/types/api'
+import type { BblockSummary } from '~/types/api';
 
-  defineProps<{ bblock: BblockSummary }>()
+defineProps<{ bblock: BblockSummary }>();
 </script>

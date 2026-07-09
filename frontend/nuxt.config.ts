@@ -1,13 +1,9 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
-  compatibilityDate: '2025-12-21',
-  devtools: { enabled: true },
 
-  runtimeConfig: {
-    public: {
-      apiBase: 'http://localhost:8000',
-    },
-  },
+  // ssr: false,
+  modules: ['@nuxt/fonts', 'vuetify-nuxt-module', '@nuxt/eslint'],
+  devtools: { enabled: true },
 
   app: {
     head: {
@@ -19,8 +15,17 @@ export default defineNuxtConfig({
     },
   },
 
-  // ssr: false,
-  modules: ['@nuxt/fonts', 'vuetify-nuxt-module', '@nuxt/eslint'],
+  css: [
+    'vuetify/styles',
+    'assets/styles/tailwind.css',
+  ],
+
+  runtimeConfig: {
+    public: {
+      apiBase: 'http://localhost:8000',
+    },
+  },
+  compatibilityDate: '2025-12-21',
 
   postcss: {
     plugins: {
@@ -28,10 +33,16 @@ export default defineNuxtConfig({
     },
   },
 
-  css: [
-    'vuetify/styles',
-    'assets/styles/tailwind.css',
-  ],
+  eslint: {
+    config: {
+      import: {
+        package: 'eslint-plugin-import-lite',
+      },
+      stylistic: {
+        semi: true,
+      },
+    },
+  },
 
   vuetify: {
     moduleOptions: {
@@ -50,12 +61,4 @@ export default defineNuxtConfig({
       },
     },
   },
-
-  eslint: {
-    config: {
-      import: {
-        package: 'eslint-plugin-import-lite',
-      },
-    },
-  },
-})
+});

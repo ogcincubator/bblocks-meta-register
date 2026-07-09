@@ -1,13 +1,13 @@
-import MarkdownIt from 'markdown-it'
+import MarkdownIt from 'markdown-it';
 
-let md: MarkdownIt | null = null
+let md: MarkdownIt | null = null;
 
-export function useMarkdown () {
-  md ??= new MarkdownIt({ html: false, linkify: true })
+export function useMarkdown() {
+  md ??= new MarkdownIt({ html: false, linkify: true });
 
-  function renderMarkdown (text: string): string {
-    return md!.render(text)
+  function renderMarkdown(text: string): string {
+    return md!.render(text);
   }
 
-  return { renderMarkdown }
+  return { renderMarkdown };
 }

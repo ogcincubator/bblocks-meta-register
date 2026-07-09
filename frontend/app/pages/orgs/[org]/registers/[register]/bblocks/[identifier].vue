@@ -58,6 +58,22 @@
         {{ bblock.id }}
       </p>
 
+      <div
+        v-if="bblockViewerUrl"
+        class="mb-4"
+      >
+        <v-btn
+          :href="bblockViewerUrl"
+          prepend-icon="mdi-open-in-new"
+          rel="noopener"
+          size="small"
+          target="_blank"
+          variant="tonal"
+        >
+          Open in bblocks-viewer
+        </v-btn>
+      </div>
+
       <MarkdownText
         v-if="bblock.abstract"
         class="text-base mb-4"
@@ -173,20 +189,27 @@
 </template>
 
 <script lang="ts" setup>
-  import type { BblockDetail, DependencyGraph as DependencyGraphData } from '~/types/api'
+import type { BblockDetail, DependencyGraph as DependencyGraphData, RegisterSummary } from '~/types/api';
 
-  const route = useRoute()
-  const orgId = route.params.org as string
-  const registerName = route.params.register as string
-  const identifier = route.params.identifier as string
+const route = useRoute();
+const orgId = route.params.org as string;
+const registerName = route.params.register as string;
+const identifier = route.params.identifier as string;
 
-  const { data: bblock, status, error } = useApi<BblockDetail>(`/bblocks/${identifier}`)
-  const { data: graph } = useApi<DependencyGraphData>(`/bblocks/${identifier}/graph`, { query: { depth: 2 } })
+const { data: bblock, status, error } = useApi<BblockDetail>(`/bblocks/${identifier}`);
+const { data: graph } = useApi<DependencyGraphData>(`/bblocks/${identifier}/graph`, { query: { depth: 2 } });
+const { data: registers } = useApi<RegisterSummary[]>('/registers', { query: { org: orgId } });
 
-  const registerLink = computed(() => {
-    const [org, register] = (bblock.value?.register_id ?? '').split('/')
-    return `/orgs/${org}/registers/${register}`
-  })
+const bblockViewerUrl = computed(() => {
+  const registerId = bblock.value?.register_id;
+  const viewerUrl = registers.value?.find(r => r.id === registerId)?.viewer_url;
+  return viewerUrl ? `${viewerUrl.replace(/\/$/, '')}/bblock/${identifier}` : null;
+});
 
-  useHead({ title: () => bblock.value?.name ?? identifier })
+const registerLink = computed(() => {
+  const [org, register] = (bblock.value?.register_id ?? '').split('/');
+  return `/orgs/${org}/registers/${register}`;
+});
+
+useHead({ title: () => bblock.value?.name ?? identifier });
 </script>

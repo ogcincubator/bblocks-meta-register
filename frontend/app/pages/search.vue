@@ -102,46 +102,46 @@
 </template>
 
 <script lang="ts" setup>
-  import type { BblockListResponse } from '~/types/api'
+import type { BblockListResponse } from '~/types/api';
 
-  const route = useRoute()
-  const router = useRouter()
+const route = useRoute();
+const router = useRouter();
 
-  const q = ref((route.query.q as string) ?? '')
-  const itemClass = ref((route.query.item_class as string) ?? null)
-  const statusFilter = ref((route.query.status as string) ?? null)
-  const page = ref(Number(route.query.page) || 1)
-  const limit = 20
+const q = ref((route.query.q as string) ?? '');
+const itemClass = ref((route.query.item_class as string) ?? null);
+const statusFilter = ref((route.query.status as string) ?? null);
+const page = ref(Number(route.query.page) || 1);
+const limit = 20;
 
-  const itemClassOptions = ['schema', 'datatype', 'api', 'model', 'requirements-class']
-  const statusOptions = ['under-development', 'experimental', 'stable', 'superseded', 'retired']
+const itemClassOptions = ['schema', 'datatype', 'api', 'model', 'requirements-class'];
+const statusOptions = ['under-development', 'experimental', 'stable', 'superseded', 'retired'];
 
-  const queryParams = computed(() => ({
-    q: q.value || undefined,
-    item_class: itemClass.value || undefined,
-    status: statusFilter.value || undefined,
-    limit,
-    offset: (page.value - 1) * limit,
-  }))
+const queryParams = computed(() => ({
+  q: q.value || undefined,
+  item_class: itemClass.value || undefined,
+  status: statusFilter.value || undefined,
+  limit,
+  offset: (page.value - 1) * limit,
+}));
 
-  const { data, status: fetchStatus, error } = useApi<BblockListResponse>('/bblocks', { query: queryParams })
+const { data, status: fetchStatus, error } = useApi<BblockListResponse>('/bblocks', { query: queryParams });
 
-  useHead({ title: 'Search' })
+useHead({ title: 'Search' });
 
-  const pageCount = computed(() => (data.value ? Math.max(1, Math.ceil(data.value.numberMatched / limit)) : 1))
+const pageCount = computed(() => (data.value ? Math.max(1, Math.ceil(data.value.numberMatched / limit)) : 1));
 
-  watch([q, itemClass, statusFilter], () => {
-    page.value = 1
-  })
+watch([q, itemClass, statusFilter], () => {
+  page.value = 1;
+});
 
-  watch([q, itemClass, statusFilter, page], () => {
-    router.replace({
-      query: {
-        ...(q.value ? { q: q.value } : {}),
-        ...(itemClass.value ? { item_class: itemClass.value } : {}),
-        ...(statusFilter.value ? { status: statusFilter.value } : {}),
-        ...(page.value > 1 ? { page: page.value } : {}),
-      },
-    })
-  })
+watch([q, itemClass, statusFilter, page], () => {
+  router.replace({
+    query: {
+      ...(q.value ? { q: q.value } : {}),
+      ...(itemClass.value ? { item_class: itemClass.value } : {}),
+      ...(statusFilter.value ? { status: statusFilter.value } : {}),
+      ...(page.value > 1 ? { page: page.value } : {}),
+    },
+  });
+});
 </script>

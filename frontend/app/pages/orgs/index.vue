@@ -51,9 +51,9 @@
 </template>
 
 <script lang="ts" setup>
-  import type { OrgSummary } from '~/types/api'
+import type { OrgSummary } from '~/types/api';
 
-  const { data: orgs, status, error } = useApi<OrgSummary[]>('/orgs')
+const { data: orgs, status, error } = useApi<OrgSummary[]>('/orgs');
 
-  useHead({ title: 'Organizations' })
+useHead({ title: 'Organizations' });
 </script>

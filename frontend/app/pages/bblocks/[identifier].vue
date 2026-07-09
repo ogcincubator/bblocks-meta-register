@@ -16,15 +16,15 @@
 </template>
 
 <script lang="ts" setup>
-  import type { BblockSummary } from '~/types/api'
+import type { BblockSummary } from '~/types/api';
 
-  const route = useRoute()
-  const identifier = route.params.identifier as string
+const route = useRoute();
+const identifier = route.params.identifier as string;
 
-  const { data: bblock, error } = await useApi<BblockSummary>(`/bblocks/${identifier}`)
+const { data: bblock, error } = await useApi<BblockSummary>(`/bblocks/${identifier}`);
 
-  if (bblock.value) {
-    const [org, register] = bblock.value.register_id.split('/')
-    await navigateTo(`/orgs/${org}/registers/${register}/bblocks/${identifier}`, { redirectCode: 301 })
-  }
+if (bblock.value) {
+  const [org, register] = bblock.value.register_id.split('/');
+  await navigateTo(`/orgs/${org}/registers/${register}/bblocks/${identifier}`, { redirectCode: 301 });
+}
 </script>
