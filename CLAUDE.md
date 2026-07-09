@@ -61,6 +61,15 @@ rather than re-deriving the setup. Theme defaults to `dark` (`nuxt.config.ts`); 
 distributed to various agent tools. `frontend/AGENTS.md` is the ruler-managed output; edit `.ruler/AGENTS.md` as
 the source of truth, not the generated one, if project rules need to change.
 
+## Git workflow
+
+Make topical commits: when a session produces several unrelated fixes/features, commit each
+concern separately rather than bundling them into one commit. Before staging for a commit like
+this, run `git reset .` first (safe — unstages everything, touches no working-tree content) so
+a plain `git add <files>` can't sweep in other changes already staged in the index (e.g. the
+user's own in-progress work staged from their terminal). Verify with `git status --short`
+that only the intended files are staged before committing.
+
 ## Backend (`backend/`)
 
 Not yet implemented. Per the architecture doc, the intended responsibilities are: discover registers via the
