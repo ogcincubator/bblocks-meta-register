@@ -1,90 +1,119 @@
 <template>
-  <div v-if="graphData">
-    <VNetworkGraph
-      ref="networkGraph"
-      :configs="configs"
-      :edges="graphData.edges"
-      :event-handlers="eventHandlers"
-      :layouts="graphData.layouts"
-      :nodes="graphData.nodes"
-      :style="{ height: graphHeight + 'px' }"
+  <div v-if="hasDependsOn || hasDependents">
+    <v-tabs
+      v-model="activeTab"
+      density="compact"
     >
-      <template #edge-label="{ edge, hovered, ...slotProps }">
-        <VEdgeLabel
-          v-if="hovered"
-          align="center"
-          :text="edge.kind"
-          vertical-align="above"
-          v-bind="slotProps"
-        />
-      </template>
-    </VNetworkGraph>
+      <v-tab
+        :disabled="!hasDependsOn"
+        value="depends_on"
+      >
+        Depends on
+      </v-tab>
 
-    <div class="flex flex-wrap gap-4 mt-2 text-xs opacity-70">
-      <span class="flex items-center gap-1">
-        <svg
-          height="10"
-          width="10"
-        ><circle
-          cx="5"
-          cy="5"
-          :fill="colors.center"
-          r="5"
-        /></svg>
-        This item
-      </span>
+      <v-tab
+        :disabled="!hasDependents"
+        value="dependents"
+      >
+        Dependents
+      </v-tab>
+    </v-tabs>
 
-      <span class="flex items-center gap-1">
-        <svg
-          height="10"
-          width="10"
-        ><circle
-          cx="5"
-          cy="5"
-          :fill="colors.known"
-          r="5"
-        /></svg>
-        In the meta-register
-      </span>
+    <div
+      v-if="activeGraphData"
+      class="mt-4"
+    >
+      <VNetworkGraph
+        ref="networkGraph"
+        :configs="configs"
+        :edges="activeGraphData.edges"
+        :event-handlers="eventHandlers"
+        :layouts="activeGraphData.layouts"
+        :nodes="activeGraphData.nodes"
+        :style="{ height: graphHeight + 'px' }"
+      >
+        <template #edge-label="{ edge, hovered, ...slotProps }">
+          <VEdgeLabel
+            v-if="hovered"
+            align="center"
+            :text="edge.kind"
+            vertical-align="above"
+            v-bind="slotProps"
+          />
+        </template>
+      </VNetworkGraph>
 
-      <span class="flex items-center gap-1">
-        <svg
-          height="10"
-          width="10"
-        ><circle
-          cx="5"
-          cy="5"
-          :fill="colors.unknown"
-          r="5"
-          stroke="#666"
-          stroke-dasharray="2"
-        /></svg>
-        Outside the meta-register
-      </span>
+      <div class="flex flex-wrap gap-4 mt-2 text-xs opacity-70">
+        <span class="flex items-center gap-1">
+          <svg
+            height="10"
+            width="10"
+          ><circle
+            cx="5"
+            cy="5"
+            :fill="colors.center"
+            r="5"
+          /></svg>
+          This item
+        </span>
+
+        <span class="flex items-center gap-1">
+          <svg
+            height="10"
+            width="10"
+          ><circle
+            cx="5"
+            cy="5"
+            :fill="colors.known"
+            r="5"
+          /></svg>
+          In the meta-register
+        </span>
+
+        <span class="flex items-center gap-1">
+          <svg
+            height="10"
+            width="10"
+          ><circle
+            cx="5"
+            cy="5"
+            :fill="colors.unknown"
+            r="5"
+            stroke="#666"
+            stroke-dasharray="2"
+          /></svg>
+          Outside the meta-register
+        </span>
+      </div>
     </div>
-  </div>
 
-  <p
-    v-else
-    class="opacity-70 text-sm"
-  >
-    No dependency relationships found.
-  </p>
+    <p
+      v-else
+      class="opacity-70 text-sm mt-4"
+    >
+      No {{ activeTab === 'depends_on' ? 'dependencies' : 'dependents' }} found.
+    </p>
+  </div>
 </template>
 
 <script lang="ts" setup>
 import type { DependencyGraph } from '~/types/api';
 import dagre from 'dagre';
 import { VEdgeLabel, VNetworkGraph } from 'v-network-graph';
+import type { Edge as GraphEdge, Node as GraphNode } from 'v-network-graph';
 import 'v-network-graph/lib/style.css';
 
 const props = withDefaults(defineProps<{
-  graph: DependencyGraph | null | undefined;
+  basePath: string;
   centerId: string;
   nodeType: 'bblock' | 'register';
+  hasDependsOn: boolean;
+  hasDependents: boolean;
+  depth?: number;
   nodeSize?: number;
   height?: number;
 }>(), {
+  depth: 2,
   nodeSize: 32,
   height: 360,
 });
@@ -93,6 +122,26 @@ const router = useRouter();
 const theme = useTheme();
 const labelColor = computed(() => theme.current.value.dark ? '#e0e0e0' : '#1a1a1a');
 const networkGraph = ref<InstanceType<typeof VNetworkGraph> | null>(null);
+
+const activeTab = ref<'depends_on' | 'dependents'>(props.hasDependsOn ? 'depends_on' : 'dependents');
+
+const { data: dependsOnGraph, execute: fetchDependsOn } = useApi<DependencyGraph>(`${props.basePath}/graph`, {
+  query: { depth: props.depth, direction: 'depends_on' },
+  immediate: false,
+});
+const { data: dependentsGraph, execute: fetchDependents } = useApi<DependencyGraph>(`${props.basePath}/graph`, {
+  query: { depth: props.depth, direction: 'dependents' },
+  immediate: false,
+});
+
+watch(activeTab, (tab) => {
+  if (tab === 'depends_on' && dependsOnGraph.value === null) {
+    fetchDependsOn();
+  }
+  if (tab === 'dependents' && dependentsGraph.value === null) {
+    fetchDependents();
+  }
+}, { immediate: true });
 
 const colors = {
   center: '#7c3aed',
@@ -121,8 +170,7 @@ interface LayoutNode {
   registerId: string | null;
 }
 
-const graphData = computed(() => {
-  const graph = props.graph;
+function buildGraphData(graph: DependencyGraph | null | undefined) {
   if (!graph || graph.edges.length === 0) {
     return null;
   }
@@ -168,10 +216,12 @@ const graphData = computed(() => {
   }
 
   return { nodes, edges, layouts: { nodes: layoutNodes } };
-});
+}
+
+const activeGraphData = computed(() => buildGraphData(activeTab.value === 'depends_on' ? dependsOnGraph.value : dependentsGraph.value));
 
 const graphHeight = computed(() => {
-  const nodes = graphData.value?.layouts?.nodes;
+  const nodes = activeGraphData.value?.layouts?.nodes;
   if (!nodes) {
     return props.height;
   }
@@ -191,13 +241,13 @@ const configs = computed(() => ({
   node: {
     normal: {
       radius: props.nodeSize / 2,
-      color: (node: LayoutNode) => node.color,
-      strokeWidth: (node: LayoutNode) => (node.dashed ? 1 : 0),
+      color: (node: GraphNode) => (node as LayoutNode).color,
+      strokeWidth: (node: GraphNode) => ((node as LayoutNode).dashed ? 1 : 0),
       strokeColor: '#555',
-      strokeDasharray: (node: LayoutNode) => (node.dashed ? '3' : '0'),
+      strokeDasharray: (node: GraphNode) => ((node as LayoutNode).dashed ? '3' : '0'),
     },
     hover: {
-      color: (node: LayoutNode) => node.color,
+      color: (node: GraphNode) => (node as LayoutNode).color,
     },
     label: {
       directionAutoAdjustment: true,
@@ -206,11 +256,11 @@ const configs = computed(() => ({
   },
   edge: {
     normal: {
-      color: (edge: { kind: string }) => edgeColors[edge.kind] ?? '#aaa',
+      color: (edge: GraphEdge) => edgeColors[(edge as unknown as { kind: string }).kind] ?? '#aaa',
       width: 2,
     },
     hover: {
-      color: (edge: { kind: string }) => edgeColors[edge.kind] ?? '#aaa',
+      color: (edge: GraphEdge) => edgeColors[(edge as unknown as { kind: string }).kind] ?? '#aaa',
     },
     margin: 4,
     marker: {
@@ -225,7 +275,7 @@ const configs = computed(() => ({
 
 const eventHandlers = {
   'node:click': ({ node }: { node: string }) => {
-    const data = graphData.value?.nodes?.[node];
+    const data = activeGraphData.value?.nodes?.[node];
     if (!data?.known) {
       return;
     }
@@ -235,7 +285,7 @@ const eventHandlers = {
     }
   },
   'node:pointerover': ({ node, event }: { node: string; event: PointerEvent }) => {
-    const data = graphData.value?.nodes?.[node];
+    const data = activeGraphData.value?.nodes?.[node];
     const svg = (event.target as SVGElement)?.ownerSVGElement;
     if (svg) {
       svg.style.cursor = data?.known ? 'pointer' : 'default';
@@ -243,7 +293,7 @@ const eventHandlers = {
   },
 };
 
-watch(graphData, (v) => {
+watch(activeGraphData, (v) => {
   if (v && networkGraph.value) {
     networkGraph.value.fitToContents();
   }

@@ -98,9 +98,11 @@
         </h3>
 
         <DependencyGraph
+          :base-path="`/registers/${orgId}/${registerName}`"
           :center-id="`${orgId}/${registerName}`"
           class="mb-6"
-          :graph="graph"
+          :has-dependents="register.dependents.length > 0"
+          :has-depends-on="register.depends_on.length > 0"
           node-type="register"
         />
 
@@ -130,14 +132,13 @@
 </template>
 
 <script lang="ts" setup>
-import type { DependencyGraph as DependencyGraphData, RegisterDetail } from '~/types/api';
+import type { RegisterDetail } from '~/types/api';
 
 const route = useRoute();
 const orgId = route.params.org as string;
 const registerName = route.params.register as string;
 
 const { data: register, status, error } = useApi<RegisterDetail>(`/registers/${orgId}/${registerName}`);
-const { data: graph } = useApi<DependencyGraphData>(`/registers/${orgId}/${registerName}/graph`, { query: { depth: 2 } });
 
 useHead({ title: () => register.value?.name ?? registerName });
 </script>

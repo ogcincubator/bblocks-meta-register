@@ -173,8 +173,10 @@
         </h2>
 
         <DependencyGraph
+          :base-path="`/bblocks/${identifier}`"
           :center-id="identifier"
-          :graph="graph"
+          :has-dependents="bblock.dependents.length > 0"
+          :has-depends-on="bblock.depends_on.length > 0"
           node-type="bblock"
         />
       </template>
@@ -189,7 +191,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { BblockDetail, DependencyGraph as DependencyGraphData, RegisterSummary } from '~/types/api';
+import type { BblockDetail, RegisterSummary } from '~/types/api';
 
 const route = useRoute();
 const orgId = route.params.org as string;
@@ -197,7 +199,6 @@ const registerName = route.params.register as string;
 const identifier = route.params.identifier as string;
 
 const { data: bblock, status, error } = useApi<BblockDetail>(`/bblocks/${identifier}`);
-const { data: graph } = useApi<DependencyGraphData>(`/bblocks/${identifier}/graph`, { query: { depth: 2 } });
 const { data: registers } = useApi<RegisterSummary[]>('/registers', { query: { org: orgId } });
 
 const bblockViewerUrl = computed(() => {
