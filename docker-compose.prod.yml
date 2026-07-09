@@ -1,0 +1,100 @@
+# Images are built and pushed to GHCR by .github/workflows/ci.yml on every push to main
+# (tagged "latest") and per-branch/per-sha otherwise. Override IMAGE_TAG to pin a specific
+# build, e.g. IMAGE_TAG=main-<sha> or a branch name, instead of always tracking latest.
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # One-shot: pulls the embedding model into the ollama service's volume, then exits.
+  # `ollama pull` here acts as a client against OLLAMA_HOST -- the model is downloaded and
+  # stored by the `ollama` service itself, not by this container, so it only needs to run once
+  # (re-runs are cheap no-ops once the model is already present).
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama", "pull", "nomic-embed-text-v2-moe:latest"]
+    restart: "no"
+
+  backend:
+    image: ghcr.io/ogcincubator/bblocks-meta-register/backend:${IMAGE_TAG:-latest}
+    depends_on:
+      ollama-pull:
+        condition: service_completed_successfully
+    environment:
+      BBLOCKS_DATABASE_PATH: /data/meta-register.db
+      BBLOCKS_OLLAMA_BASE_URL: http://ollama:11434
+      BBLOCKS_OLLAMA_EMBEDDING_MODEL: nomic-embed-text-v2-moe:latest
+      # Required in any deployment reachable from outside the docker network -- unset leaves
+      # /admin/* unprotected. Set BBLOCKS_ADMIN_API_KEY in a .env file alongside this compose
+      # file (docker compose loads it automatically); do not hardcode it here.
+      BBLOCKS_ADMIN_API_KEY: ${BBLOCKS_ADMIN_API_KEY:?set BBLOCKS_ADMIN_API_KEY in .env}
+
+      # -- Optional: uncomment to override defaults (see backend/app/config.py) --
+
+      # Where the meta-registry index is fetched from; only change for a fork or a private index.
+      # BBLOCKS_META_REGISTRY_INDEX_URL: https://w3id.org/ogc/bblocks/meta-register.json
+      # BBLOCKS_META_REGISTRY_ORGS_URL: https://w3id.org/ogc/bblocks/meta-register-orgs.json
+
+      # How often the crawler re-scans all known registers, and whether it runs once on boot.
+      # BBLOCKS_CRAWL_INTERVAL_SECONDS: 3600
+      # BBLOCKS_CRAWL_ON_STARTUP: true
+      # BBLOCKS_CRAWL_WORKER_POOL_SIZE: 3
+      # BBLOCKS_CRAWL_PER_HOST_MIN_INTERVAL_SECONDS: 1.0
+
+      # Outbound HTTP tuning for register/bblock fetches during crawling.
+      # BBLOCKS_HTTP_TIMEOUT_SECONDS: 30.0
+      # BBLOCKS_HTTP_MAX_RETRIES: 3
+
+      # "ollama" (default, used above) or "openai_compatible" -- switch to the latter to use a
+      # hosted embeddings API instead of the local ollama service (and drop the ollama/ollama-pull
+      # services below if so, since nothing else in this stack needs them).
+      # BBLOCKS_EMBEDDING_PROVIDER: ollama
+      # BBLOCKS_EMBEDDING_DIMENSIONS: 768
+      # BBLOCKS_OPENAI_COMPATIBLE_BASE_URL:
+      # BBLOCKS_OPENAI_COMPATIBLE_EMBEDDING_MODEL:
+      # BBLOCKS_OPENAI_COMPATIBLE_API_KEY:
+
+      # Search tuning: batch size for embedding calls, candidate pool sizes per pass, and how
+      # much the semantic (vs. keyword) pass counts in the hybrid merge (0-1).
+      # BBLOCKS_EMBEDDING_BATCH_SIZE: 64
+      # BBLOCKS_SEARCH_KEYWORD_CANDIDATES: 50
+      # BBLOCKS_SEARCH_SEMANTIC_CANDIDATES: 50
+      # BBLOCKS_SEARCH_SEMANTIC_WEIGHT: 0.75
+    volumes:
+      - backend_data:/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/ogcincubator/bblocks-meta-register/frontend:${IMAGE_TAG:-latest}
+    depends_on:
+      - backend
+    environment:
+      # REQUIRED override in any real deployment: the browser-facing URL of the backend, not
+      # the docker-internal service name (http://backend:8000 is unreachable from the user's
+      # browser). This value is baked into pages sent to the client, so it must be whatever
+      # public host/port/path the backend is reverse-proxied behind. Defaults to localhost:8000,
+      # which only works when the browser and this stack are on the same machine.
+      NUXT_PUBLIC_API_BASE: ${PUBLIC_API_BASE:-http://localhost:8000}
+      # No other runtime-configurable env vars are defined in frontend/nuxt.config.ts today.
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+  backend_data:
