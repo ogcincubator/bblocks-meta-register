@@ -7,6 +7,11 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
+    mem_limit: 3g
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
     healthcheck:
       test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
       interval: 10s
@@ -73,11 +78,20 @@ services:
       # BBLOCKS_SEARCH_KEYWORD_CANDIDATES: 50
       # BBLOCKS_SEARCH_SEMANTIC_CANDIDATES: 50
       # BBLOCKS_SEARCH_SEMANTIC_WEIGHT: 0.75
+
+      # Set if this service is reverse-proxied under a subpath rather than served at the host
+      # root, e.g. /meta-register-backend (see backend/Dockerfile for what this does/doesn't fix
+      # up). Defaults to "" (host root) if unset.
+      # ROOT_PATH: /meta-register-backend
     volumes:
       - backend_data:/data
     ports:
       - "8000:8000"
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
 
   frontend:
     image: ghcr.io/ogcincubator/bblocks-meta-register/frontend:${IMAGE_TAG:-latest}
@@ -90,7 +104,12 @@ services:
       # public host/port/path the backend is reverse-proxied behind. Defaults to localhost:8000,
       # which only works when the browser and this stack are on the same machine.
       NUXT_PUBLIC_API_BASE: ${PUBLIC_API_BASE:-http://localhost:8000}
-      # No other runtime-configurable env vars are defined in frontend/nuxt.config.ts today.
+      # NUXT_APP_BASE_URL is a special-cased env override for nuxt.config.ts's `app.baseURL`
+      # (default "/"), read at server startup -- no image rebuild needed. Set if this service is
+      # reverse-proxied under a subpath, e.g. /meta-register-frontend/ (trailing slash required).
+      # Unlike the backend's ROOT_PATH, the reverse proxy must forward this subpath through
+      # unstripped -- Nuxt's router expects to see its own base path in the request.
+      # NUXT_APP_BASE_URL: /meta-register-frontend/
     ports:
       - "3000:3000"
     restart: unless-stopped
