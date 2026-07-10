@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 import time
 from urllib.parse import urlsplit
 
@@ -18,10 +19,15 @@ class PerHostThrottle:
     whole request (see get_json), not just the interval wait, so a slow response from one
     register can't overlap with another request to the same host -- GitHub read timeouts have
     been observed under concurrent load, and a request that's merely spaced out but still
-    overlapping in flight wouldn't avoid that."""
+    overlapping in flight wouldn't avoid that.
 
-    def __init__(self, min_interval_seconds: float):
+    Each scheduled interval gets `random.uniform(0, jitter_seconds)` added on top of
+    `min_interval_seconds`, so requests to a host land at an irregular cadence rather than a
+    perfectly even one-per-N-seconds beat."""
+
+    def __init__(self, min_interval_seconds: float, jitter_seconds: float = 0.0):
         self._min_interval = min_interval_seconds
+        self._jitter = jitter_seconds
         self._locks: dict[str, asyncio.Lock] = {}
         self._next_allowed_at: dict[str, float] = {}
 
@@ -35,13 +41,14 @@ class PerHostThrottle:
         next_allowed = self._next_allowed_at.get(host, 0.0)
         if now < next_allowed:
             await asyncio.sleep(next_allowed - now)
-        self._next_allowed_at[host] = time.monotonic() + self._min_interval
+        interval = self._min_interval + random.uniform(0, self._jitter)
+        self._next_allowed_at[host] = time.monotonic() + interval
 
     def back_off(self, host: str, delay_seconds: float) -> None:
         self._next_allowed_at[host] = time.monotonic() + delay_seconds
 
 
-_throttle = PerHostThrottle(settings.crawl_per_host_min_interval_seconds)
+_throttle = PerHostThrottle(settings.crawl_per_host_min_interval_seconds, settings.crawl_per_host_jitter_seconds)
 
 
 async def get_json(client: httpx.AsyncClient, url: str) -> dict | list:

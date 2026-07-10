@@ -12,7 +12,10 @@ class Settings(BaseSettings):
     crawl_interval_seconds: int = 3600
     crawl_on_startup: bool = True
     crawl_worker_pool_size: int = 3
-    crawl_per_host_min_interval_seconds: float = 1.0
+    crawl_per_host_min_interval_seconds: float = 2.0
+    # Random jitter added on top of the min interval so per-host request timing isn't a
+    # perfectly regular cadence -- see PerHostThrottle.wait() in app/crawler/http.py.
+    crawl_per_host_jitter_seconds: float = 1.0
 
     http_timeout_seconds: float = 30.0
     http_max_retries: int = 3
