@@ -21,8 +21,10 @@ from app.repositories.bblocks import get_bblock as repo_get_bblock
 from app.repositories.bblocks import get_bblocks_by_ids, list_bblocks
 from app.repositories.deps import (
     incoming_bblock_deps,
+    incoming_bblock_deps_batch,
     incoming_register_deps,
     outgoing_bblock_deps,
+    outgoing_bblock_deps_batch,
     outgoing_register_deps,
     traverse_incoming_bblock_deps,
     traverse_incoming_register_deps,
@@ -64,8 +66,10 @@ mcp = FastMCP(
         "when looking for building blocks to compose a solution for some use case -- it's "
         "hybrid keyword+semantic search over names, descriptions, schemas, and examples, not a "
         "plain substring match. Use get_bblock/get_register/get_org/list_* to inspect a "
-        "specific candidate before recommending it, and bblock_dependencies/"
-        "register_dependencies to check what it already pulls in or what depends on it."
+        "specific candidate before recommending it (get_bblocks fetches several bblocks by id "
+        "in one call -- prefer it over looping get_bblock over a shortlist), and "
+        "bblock_dependencies/register_dependencies to check what it already pulls in or what "
+        "depends on it."
     ),
 )
 
@@ -152,6 +156,47 @@ async def get_bblock(identifier: str) -> dict:
             dependents=dependents,
         )
         return detail.model_dump()
+
+
+@mcp.tool()
+async def get_bblocks(identifiers: list[str]) -> dict:
+    """Fetch full detail (including dependency edges) for several bblocks by id in one call --
+    use this instead of calling get_bblock in a loop when inspecting a shortlist from
+    search_bblocks/list_bblocks_tool. Unknown identifiers are reported in `not_found` rather
+    than raising, so one bad id doesn't fail the whole batch.
+
+    Args:
+        identifiers: Bblock identifiers to fetch (1-50).
+    """
+    identifiers = identifiers[:50]
+    async with session_scope() as session:
+        bblocks_by_id = await get_bblocks_by_ids(session, identifiers)
+        found_ids = [i for i in identifiers if i in bblocks_by_id]
+        depends_on_batch = await outgoing_bblock_deps_batch(session, found_ids)
+        dependents_batch = await incoming_bblock_deps_batch(session, found_ids)
+
+        items = []
+        for identifier in found_ids:
+            bblock = bblocks_by_id[identifier]
+            depends_on = [DepEdge(id=t, kind=k) for t, k in depends_on_batch.get(identifier, [])]
+            dependents = [DepEdge(id=s, kind=k) for s, k in dependents_batch.get(identifier, [])]
+            detail = BblockDetail(
+                **BblockSummary.model_validate(bblock).model_dump(),
+                date_time_addition=bblock.date_time_addition,
+                date_of_last_change=bblock.date_of_last_change,
+                schema_urls=bblock.schema_urls,
+                ld_context_url=bblock.ld_context_url,
+                shacl_shapes_urls=bblock.shacl_shapes_urls,
+                sources=bblock.sources,
+                depends_on=depends_on,
+                dependents=dependents,
+            )
+            items.append(detail.model_dump())
+
+        return {
+            "items": items,
+            "not_found": [i for i in identifiers if i not in bblocks_by_id],
+        }
 
 
 @mcp.tool()

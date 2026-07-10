@@ -43,6 +43,42 @@ async def incoming_bblock_deps(session: AsyncSession, bblock_id: str) -> list[tu
     return [(row.source_id, row.kind) for row in result]
 
 
+async def outgoing_bblock_deps_batch(
+    session: AsyncSession, bblock_ids: list[str]
+) -> dict[str, list[tuple[str, str]]]:
+    """Same as outgoing_bblock_deps but for many source ids in one query -- avoids an N+1 when
+    hydrating a batch of bblocks (see get_bblocks in app/mcp/server.py). Ids with no outgoing
+    edges are simply absent from the returned dict."""
+    if not bblock_ids:
+        return {}
+    result = await session.execute(
+        select(bblock_deps.c.source_id, bblock_deps.c.target_id, bblock_deps.c.kind).where(
+            bblock_deps.c.source_id.in_(bblock_ids)
+        )
+    )
+    edges: dict[str, list[tuple[str, str]]] = {}
+    for row in result:
+        edges.setdefault(row.source_id, []).append((row.target_id, row.kind))
+    return edges
+
+
+async def incoming_bblock_deps_batch(
+    session: AsyncSession, bblock_ids: list[str]
+) -> dict[str, list[tuple[str, str]]]:
+    """Same as incoming_bblock_deps but for many target ids in one query."""
+    if not bblock_ids:
+        return {}
+    result = await session.execute(
+        select(bblock_deps.c.target_id, bblock_deps.c.source_id, bblock_deps.c.kind).where(
+            bblock_deps.c.target_id.in_(bblock_ids)
+        )
+    )
+    edges: dict[str, list[tuple[str, str]]] = {}
+    for row in result:
+        edges.setdefault(row.target_id, []).append((row.source_id, row.kind))
+    return edges
+
+
 async def _traverse_self_join(
     session: AsyncSession,
     table: Table,

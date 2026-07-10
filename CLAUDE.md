@@ -97,7 +97,9 @@ regardless of `modified` until its `registers.indexer_version` column catches up
 A FastMCP server exposing the same catalog (search/browse/detail/dependency-traversal across orgs → registers →
 bblocks) as MCP tools for LLM agents, mounted at `/mcp` on the FastAPI app (streamable HTTP transport) rather than
 run as a separate process, so it shares the app's DB session factory. Tools: `search_bblocks` (hybrid
-keyword+semantic), `get_bblock`/`list_bblocks_tool`, `get_register`/`list_registers_tool`, `get_org`/`list_orgs_tool`,
+keyword+semantic), `get_bblock`/`get_bblocks`/`list_bblocks_tool` (`get_bblocks` batches full detail for several ids
+in one call — batched dependency-edge queries under the hood, not a loop over `get_bblock` — prefer it over looping
+`get_bblock` when hydrating a search shortlist), `get_register`/`list_registers_tool`, `get_org`/`list_orgs_tool`,
 `bblock_dependencies`/`register_dependencies` (multi-hop graph traversal, either direction).
 
 To point a local Claude Code session at it for manual testing: start the server as above, then

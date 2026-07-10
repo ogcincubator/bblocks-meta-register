@@ -47,6 +47,15 @@ async def test_get_bblock_tool(db_session, mcp_tools):
         await mcp_tools.get_bblock("does.not.exist")
 
 
+async def test_get_bblocks_tool(db_session, mcp_tools):
+    await _seed(db_session)
+
+    body = await mcp_tools.get_bblocks(["ogc.main.a", "does.not.exist"])
+    assert [item["id"] for item in body["items"]] == ["ogc.main.a"]
+    assert body["items"][0]["depends_on"] == []
+    assert body["not_found"] == ["does.not.exist"]
+
+
 async def test_list_bblocks_tool(db_session, mcp_tools):
     await _seed(db_session)
 
