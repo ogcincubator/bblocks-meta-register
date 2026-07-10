@@ -95,6 +95,34 @@ async def test_keyword_index_sanitizes_special_characters(db_session):
     assert await keyword_index.search(db_session, 'weird: query* -syntax "here', 10) == []
 
 
+async def test_keyword_index_indexes_description(db_session):
+    await keyword_index.upsert(
+        db_session, bblock_id="b1", register_id="ogc/main", org="ogc", item_class=None,
+        status=None, name="Feature", abstract=None, tags=[],
+        description="Long-form prose only mentioning provenance in the description field.",
+    )
+    await db_session.commit()
+
+    assert [h.bblock_id for h in await keyword_index.search(db_session, "provenance", 10)] == ["b1"]
+
+
+async def test_keyword_index_ranks_name_match_above_description_only_match(db_session):
+    # "provenance" only in the long description -- weighted lower than a name/title hit.
+    await keyword_index.upsert(
+        db_session, bblock_id="description-only", register_id="ogc/main", org="ogc", item_class=None,
+        status=None, name="Unrelated", abstract=None, tags=[],
+        description="A long passage that happens to mention provenance once in passing.",
+    )
+    await keyword_index.upsert(
+        db_session, bblock_id="name-match", register_id="ogc/main", org="ogc", item_class=None,
+        status=None, name="Provenance Chain", abstract=None, tags=[],
+    )
+    await db_session.commit()
+
+    hits = await keyword_index.search(db_session, "provenance", 10)
+    assert [h.bblock_id for h in hits] == ["name-match", "description-only"]
+
+
 async def test_keyword_index_delete_by_register(db_session):
     await keyword_index.upsert(
         db_session, bblock_id="b1", register_id="ogc/main", org="ogc", item_class=None,
@@ -239,7 +267,16 @@ async def test_build_register_chunks_fetches_ld_context_and_examples():
     respx.get("https://x/doc.json").mock(
         return_value=httpx.Response(
             200,
-            json={"examples": [{"title": "Example 1", "snippets": [{"language": "json", "code": '{"a": 1}'}]}]},
+            json={
+                "description": "Full markdown description of A",
+                "examples": [
+                    {
+                        "title": "Example 1",
+                        "content": "Use case: doing a thing",
+                        "snippets": [{"language": "json", "code": '{"a": 1}'}],
+                    }
+                ],
+            },
         )
     )
     register_json = {
@@ -253,19 +290,30 @@ async def test_build_register_chunks_fetches_ld_context_and_examples():
                 "itemClass": "schema",
                 "ldContext": "https://x/context.jsonld",
                 "documentation": {"json-full": {"url": "https://x/doc.json"}},
+                "sources": [{"title": "GeoJSON (RFC 7946)", "link": "https://example.org/rfc7946"}],
+                "transforms": [{"id": "to-csv", "description": "Converts to CSV"}],
             }
         ],
     }
 
     async with httpx.AsyncClient() as client:
-        chunks = await build_register_chunks(client, REGISTER_INFO, register_json)
+        chunks, descriptions = await build_register_chunks(client, REGISTER_INFO, register_json)
 
     by_type = {c.chunk_type: c for c in chunks}
-    assert set(by_type) == {"register_summary", "bblock_core", "bblock_schema", "bblock_examples"}
+    assert set(by_type) == {
+        "register_summary", "bblock_core", "bblock_description", "bblock_schema", "bblock_usage",
+    }
     assert "myProp: myNamespace:myProp" in by_type["bblock_schema"].text
     assert "@version" not in by_type["bblock_schema"].text
-    assert "Example 1" in by_type["bblock_examples"].text
-    assert '"a": 1' in by_type["bblock_examples"].text
+    assert "Example 1" in by_type["bblock_usage"].text
+    assert "Use case: doing a thing" in by_type["bblock_usage"].text
+    assert '"a": 1' in by_type["bblock_usage"].text
+    assert "GeoJSON (RFC 7946)" in by_type["bblock_usage"].text
+    assert "Converts to CSV" in by_type["bblock_usage"].text
+    assert by_type["bblock_description"].text == "Full markdown description of A"
+    assert "Full markdown description of A" not in by_type["bblock_core"].text
+    assert "GeoJSON (RFC 7946)" not in by_type["bblock_core"].text
+    assert descriptions == {"ogc.main.a": "Full markdown description of A"}
 
 
 @respx.mock
@@ -287,10 +335,11 @@ async def test_build_register_chunks_falls_back_to_resolved_properties_without_l
     }
 
     async with httpx.AsyncClient() as client:
-        chunks = await build_register_chunks(client, REGISTER_INFO, register_json)
+        chunks, descriptions = await build_register_chunks(client, REGISTER_INFO, register_json)
 
     schema_chunk = next(c for c in chunks if c.chunk_type == "bblock_schema")
     assert schema_chunk.text == "a\na.b"
+    assert descriptions == {}
 
 
 @respx.mock
@@ -303,6 +352,7 @@ async def test_build_register_chunks_skips_failed_fetch_without_raising():
     }
 
     async with httpx.AsyncClient() as client:
-        chunks = await build_register_chunks(client, REGISTER_INFO, register_json)
+        chunks, descriptions = await build_register_chunks(client, REGISTER_INFO, register_json)
 
     assert [c.chunk_type for c in chunks] == ["bblock_core"]
+    assert descriptions == {}

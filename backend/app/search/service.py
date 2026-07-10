@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # The chunk types a direct bblock search considers -- register_summary chunks are deliberately
 # excluded here (doc 03: searched separately for register-level results, not /bblocks).
-BBLOCK_CHUNK_TYPES = ["bblock_core", "bblock_schema", "bblock_examples"]
+BBLOCK_CHUNK_TYPES = ["bblock_core", "bblock_description", "bblock_schema", "bblock_usage"]
 
 
 @dataclass(frozen=True)

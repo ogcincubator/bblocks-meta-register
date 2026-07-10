@@ -81,12 +81,12 @@ async def _crawl_one_register(client, semaphore: asyncio.Semaphore, register_inf
             # Chunk-building and embedding are slow network calls (register content fetches,
             # Ollama) -- done outside session_scope() so they don't hold the app-wide _db_lock
             # (app/db/base.py) and block unrelated API reads for their duration.
-            chunks, embeddings, accepted_bblocks = await build_search_content(
+            chunks, embeddings, accepted_bblocks, descriptions = await build_search_content(
                 client, get_embedding_provider(), register_info, register_json, indexed_ids
             )
 
             async with session_scope() as session:
-                await write_search_content(session, register_info, chunks, embeddings, accepted_bblocks)
+                await write_search_content(session, register_info, chunks, embeddings, accepted_bblocks, descriptions)
                 # Only advance the change-detection field once the whole pipeline (relational
                 # rows above + search content just written) has succeeded -- see
                 # set_register_modified() for why this can't happen inside index_register().

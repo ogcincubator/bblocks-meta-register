@@ -67,9 +67,10 @@ Doc 03's keyword + semantic hybrid search, minus ontology-term boosting (see "Wh
 - **Keyword index** (`keyword_index.py`): a standalone FTS5 table (`bblocks_fts`), not an external-content table
   (see gotchas below for why), kept in sync explicitly at the same points the crawler already full-replaces a
   register's bblocks. Same `org`/`item_class`/`status` filter columns as the vector store.
-- **Chunking** (`chunking.py`): builds `register_summary`, `bblock_core`, `bblock_schema`, and `bblock_examples`
-  (from the per-bblock `documentation.json-full` doc, since register.json itself has no inline example content)
-  chunks per doc 03. `bblock_schema` prefers `ldContext` over `annotatedSchema`/`resolvedSchemaProperties` — the
+- **Chunking** (`chunking.py`): builds `register_summary`, `bblock_core`, `bblock_description`, `bblock_schema`,
+  and `bblock_usage` (from the per-bblock `documentation.json-full` doc, since register.json itself has no inline
+  `description`/example content) chunks per doc 03. `bblock_schema` prefers `ldContext` over
+  `annotatedSchema`/`resolvedSchemaProperties` — the
   JSON-LD context's field→URI bindings already reflect imported/profiled schemas' properties, where the raw schema
   would still need `$ref` resolution to see them — but falls back to `resolvedSchemaProperties` (property names,
   no URIs) when a bblock has no `ldContext` at all, so schema-only bblocks still get a `bblock_schema` chunk

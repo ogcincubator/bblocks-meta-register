@@ -1,13 +1,21 @@
 """Builds the per-register/per-bblock text chunks docs/03-indexing-and-search.md's "Chunking
 strategy" describes, ready to hand to an EmbeddingProvider and then a VectorStore.
 
-`bblock_schema` and `bblock_examples` need content that isn't in register.json itself: the
-JSON-LD context (`ldContext` URL, field name -> semantic URI mappings) and the per-bblock
-`documentation.json-full` doc (which carries fully resolved `examples`, unlike register.json
-which only lists bblock metadata). Both are fetched here, one request each per bblock that has
-them -- a fetch failure for one bblock's extra content is logged and skipped (that bblock still
-gets its `bblock_core` chunk), not allowed to abort the whole register's reindex, matching the
-crawler's existing per-register failure isolation (see app/crawler/orchestrator.py).
+`bblock_schema`, `bblock_description` and `bblock_usage` need content that isn't in
+register.json itself: the JSON-LD context (`ldContext` URL, field name -> semantic URI
+mappings) and the per-bblock `documentation.json-full` doc (which carries fully resolved
+`examples` and the bblock's full `description`, unlike register.json which only lists bblock
+metadata -- no per-bblock `description` field). Both are fetched here, one request each per
+bblock that has them -- a fetch failure for one bblock's extra content is logged and skipped
+(that bblock still gets its `bblock_core` chunk), not allowed to abort the whole register's
+reindex, matching the crawler's existing per-register failure isolation (see
+app/crawler/orchestrator.py).
+
+`description` is kept as its own `bblock_description` chunk rather than folded into
+`bblock_core`: chunk merging in app/search/service.py takes the *best*-scoring chunk per
+bblock, not an average, so splitting only helps recall -- a short, precise `bblock_core` chunk
+won't have its embedding diluted by a long markdown description, and a query that matches the
+description closely isn't held back by unrelated metadata sharing the same chunk.
 """
 
 import logging
@@ -31,30 +39,23 @@ def _register_summary_text(register_json: dict) -> str:
     return "\n".join(p for p in parts if p)
 
 
+def _bblock_description_text(json_full_doc: dict) -> str:
+    description = json_full_doc.get("description")
+    return description if isinstance(description, str) else ""
+
+
 def _bblock_core_text(raw_bblock: dict) -> str:
+    # Kept to just the short, precise identity fields -- `description` (bblock_description),
+    # and `sources`/`transforms` (bblock_usage, alongside examples) are embedded as their own
+    # chunks instead (see build_register_chunks) so their content doesn't dilute this chunk's
+    # embedding, and vice versa. `itemClass`/`status` are deliberately left out entirely: both
+    # are already exact-match query filters on hybrid_search, so embedding them as free text
+    # would only add noise, not recall.
     parts = [raw_bblock.get("name"), raw_bblock.get("abstract")]
-
-    item_class = raw_bblock.get("itemClass")
-    if item_class:
-        parts.append(f"Type: {item_class}")
-
-    status = raw_bblock.get("status")
-    if status:
-        parts.append(f"Status: {status}")
 
     tags = raw_bblock.get("tags") or []
     if tags:
         parts.append("Tags: " + ", ".join(tags))
-
-    sources = raw_bblock.get("sources") or []
-    titles = [s.get("title") for s in sources if isinstance(s, dict) and s.get("title")]
-    if titles:
-        parts.append("Sources: " + ", ".join(titles))
-
-    transforms = raw_bblock.get("transforms") or []
-    descriptions = [t.get("description") for t in transforms if isinstance(t, dict) and t.get("description")]
-    if descriptions:
-        parts.append("Transforms: " + "; ".join(descriptions))
 
     return "\n".join(p for p in parts if p)
 
@@ -103,26 +104,53 @@ def _resolved_properties_text(resolved_properties_json: dict) -> str:
     return "\n".join(dict.fromkeys(names))
 
 
-def _bblock_examples_text(json_full_doc: dict) -> str:
+def _bblock_usage_text(raw_bblock: dict, json_full_doc: dict) -> str:
+    """`sources` (specs/papers this block is based on) and `transforms` (conversions it
+    supports, e.g. "convert to CSV") describe how this block relates to and can be used with
+    other formats/standards -- the same "practical usage" territory as its examples, so all
+    three share one chunk rather than each getting a thin chunk of its own. Sources/transforms
+    come from raw_bblock (register.json) and are placed first, ahead of the truncatable
+    examples text, so they're never lost to EXAMPLE_CHUNK_CHAR_LIMIT."""
     parts = []
+
+    sources = raw_bblock.get("sources") or []
+    titles = [s.get("title") for s in sources if isinstance(s, dict) and s.get("title")]
+    if titles:
+        parts.append("Sources: " + ", ".join(titles))
+
+    transforms = raw_bblock.get("transforms") or []
+    transform_descriptions = [t.get("description") for t in transforms if isinstance(t, dict) and t.get("description")]
+    if transform_descriptions:
+        parts.append("Transforms: " + "; ".join(transform_descriptions))
+
     for example in json_full_doc.get("examples") or []:
         if not isinstance(example, dict):
             continue
         if title := example.get("title"):
             parts.append(title)
+        # `content` is the example's own Markdown description (examples.yaml's "content" field)
+        # -- often carries use-case prose that isn't repeated anywhere else, so it's as valuable
+        # to search as the title.
+        if content := example.get("content"):
+            parts.append(content)
         snippet = next(
             (s.get("code") for s in example.get("snippets") or [] if s.get("language") == "json" and s.get("code")),
             None,
         )
         if snippet:
             parts.append(snippet)
+
     return "\n".join(parts)[:EXAMPLE_CHUNK_CHAR_LIMIT]
 
 
 async def build_register_chunks(
     client: httpx.AsyncClient, register_info: RegisterInfo, register_json: dict
-) -> list[Chunk]:
+) -> tuple[list[Chunk], dict[str, str]]:
+    """Returns the chunks to embed, plus a bblock_id -> description map (sourced from the same
+    json-full doc fetched below for the bblock_description chunk, not register.json -- which has
+    no per-bblock description field) for the caller to also feed into the FTS5 keyword index."""
     chunks: list[Chunk] = []
+    descriptions: dict[str, str] = {}
 
     summary_text = _register_summary_text(register_json)
     if summary_text:
@@ -145,6 +173,20 @@ async def build_register_chunks(
 
         logger.info("Fetching search content for bblock %s (register %s)", bblock_id, register_info.register_id)
 
+        # Fetched first (rather than alongside the bblock_usage chunk further down) so its
+        # `description` field -- absent from register.json -- is available for the
+        # bblock_description chunk below.
+        json_full_doc: dict = {}
+        json_full_url = (raw_bblock.get("documentation") or {}).get("json-full", {}).get("url")
+        if json_full_url:
+            try:
+                fetched = await get_json(client, json_full_url)
+            except httpx.HTTPError as exc:
+                logger.warning("Failed to fetch json-full doc for %s: %s", bblock_id, exc)
+            else:
+                if isinstance(fetched, dict):
+                    json_full_doc = fetched
+
         core_text = _bblock_core_text(raw_bblock)
         if core_text:
             chunks.append(
@@ -152,6 +194,22 @@ async def build_register_chunks(
                     key=f"bblock_core:{bblock_id}",
                     text=core_text,
                     chunk_type="bblock_core",
+                    org=register_info.org_id,
+                    register_url=register_info.register_url,
+                    bblock_id=bblock_id,
+                    item_class=item_class,
+                    status=status,
+                )
+            )
+
+        description = _bblock_description_text(json_full_doc)
+        if description:
+            descriptions[bblock_id] = description
+            chunks.append(
+                Chunk(
+                    key=f"bblock_description:{bblock_id}",
+                    text=description,
+                    chunk_type="bblock_description",
                     org=register_info.org_id,
                     register_url=register_info.register_url,
                     bblock_id=bblock_id,
@@ -196,27 +254,19 @@ async def build_register_chunks(
                 )
             )
 
-        json_full_url = (raw_bblock.get("documentation") or {}).get("json-full", {}).get("url")
-        if json_full_url:
-            try:
-                json_full_doc = await get_json(client, json_full_url)
-            except httpx.HTTPError as exc:
-                logger.warning("Failed to fetch json-full doc for %s: %s", bblock_id, exc)
-            else:
-                if isinstance(json_full_doc, dict):
-                    examples_text = _bblock_examples_text(json_full_doc)
-                    if examples_text:
-                        chunks.append(
-                            Chunk(
-                                key=f"bblock_examples:{bblock_id}",
-                                text=examples_text,
-                                chunk_type="bblock_examples",
-                                org=register_info.org_id,
-                                register_url=register_info.register_url,
-                                bblock_id=bblock_id,
-                                item_class=item_class,
-                                status=status,
-                            )
-                        )
+        usage_text = _bblock_usage_text(raw_bblock, json_full_doc)
+        if usage_text:
+            chunks.append(
+                Chunk(
+                    key=f"bblock_usage:{bblock_id}",
+                    text=usage_text,
+                    chunk_type="bblock_usage",
+                    org=register_info.org_id,
+                    register_url=register_info.register_url,
+                    bblock_id=bblock_id,
+                    item_class=item_class,
+                    status=status,
+                )
+            )
 
-    return chunks
+    return chunks, descriptions

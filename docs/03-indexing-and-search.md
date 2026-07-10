@@ -66,9 +66,10 @@ handful of chunk types:
 | Chunk type | Source | Content |
 |---|---|---|
 | `register_summary` | register.json root fields | name, abstract, description — lets a query surface an entire register, not just individual bblocks |
-| `bblock_core` | bblock.json fields | name, abstract, description, itemClass, tags, status, sources, transforms |
+| `bblock_core` | bblock.json fields | name, abstract, tags — short, precise identity text. `itemClass`/`status` are deliberately excluded: both are already exact-match query filters on `hybrid_search`, so embedding them as free text would only add noise |
+| `bblock_description` | bblock's `documentation.json-full` doc | the full markdown `description` (absent from register.json) — kept as its own chunk rather than folded into `bblock_core`, so its much longer prose doesn't dilute that chunk's embedding |
 | `bblock_schema` | JSON-LD context (`ldContext`) | field names mapped to their semantic URIs — lets a query phrased in vocabulary terms (e.g. "schema:name") match a bblock whose field is called something else entirely |
-| `bblock_examples` | example snippets (JSON/JSON-LD/Turtle) | example titles + content, capped in length so one example doesn't dominate the chunk |
+| `bblock_usage` | bblock.json (`sources`, `transforms`) + `documentation.json-full` doc | sources (specs/papers this block is based on), transform descriptions (conversions it supports), and example titles/content/snippet code — all "how this block relates to other formats/standards" content, capped in length so a large example set doesn't dominate the chunk |
 
 Each chunk carries minimal metadata for filtering at query time — `org`, `register_url`, `bblock_id`, `item_class`,
 `chunk_type` — with the display-oriented fields (name, abstract, etc.) kept in the relational metadata tables,
@@ -116,12 +117,13 @@ boost a bblock even though the term chunk itself sits outside any org's or regis
 Doc 02 already calls for FTS5 (exact identifier/acronym lookups) + `sqlite-vec` (semantic queries) as the hybrid
 search approach; this section makes that concrete now that the chunking scheme above exists.
 
-1. **Keyword pass** — FTS5 query over `name`, `abstract`, `tags`, `itemIdentifier` in the relational bblocks
-   table. Cheap, exact-ish matches (identifiers, acronyms, exact tag names) that embeddings are typically weak at.
-2. **Semantic pass** — embed the query once, search `sqlite-vec` over `bblock_core`, `bblock_schema`, and
-   `bblock_examples` chunks (`register_summary` chunks are searched separately when the caller wants
-   register-level results, e.g. for the `/registers` search surface rather than `/bblocks`). Take the best chunk
-   score per bblock.
+1. **Keyword pass** — FTS5 query over `name`, `abstract`, `description`, `tags`, `itemIdentifier`. Cheap,
+   exact-ish matches (identifiers, acronyms, exact tag names) that embeddings are typically weak at; per-column
+   `bm25()` weights favor `name` over `abstract` over `description` (see `app/search/keyword_index.py`).
+2. **Semantic pass** — embed the query once, search `sqlite-vec` over `bblock_core`, `bblock_description`,
+   `bblock_schema`, and `bblock_usage` chunks (`register_summary` chunks are searched separately when the caller
+   wants register-level results, e.g. for the `/registers` search surface rather than `/bblocks`). Take the best
+   chunk score per bblock.
 3. **Ontology boost pass** — as described above, added on top of the semantic pass's score.
 4. **Merge and rank** — a bblock that hits in the keyword pass is guaranteed inclusion (keyword matches are strong
    signals FTS5 already found exactly); its rank score is `max(keyword_score, semantic_score + ontology_boost)`.
@@ -145,7 +147,8 @@ For a single register, per run:
    `register_url`), keyed by register URL — idempotent, safe to re-run.
 2. Fetch `register.json`, upsert the register's own relational row, and build+embed its `register_summary` chunk.
 3. For each bblock: upsert its relational row; fetch its JSON-LD context (if present) and full JSON content
-   (examples) as needed; build the `bblock_core`, `bblock_schema`, `bblock_examples` chunks; populate
+   (description, examples) as needed; build the `bblock_core`, `bblock_description`, `bblock_schema`,
+   `bblock_usage` chunks; populate
    `bblock_uris` from the JSON-LD context's field→URI mappings (also the raw material the dependency graph in
    doc 02 draws on, though that's a distinct edge table keyed on `dependsOn`/`isProfileOf`, not on JSON-LD URIs).
 4. Batch-embed all collected chunk texts in one pass (fewer round trips to the embedding provider than

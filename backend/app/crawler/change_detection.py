@@ -1,4 +1,4 @@
-INDEXER_VERSION = 1
+INDEXER_VERSION = 2
 """Bump this whenever a change to app/crawler/indexer.py's extraction/transform logic (e.g.
 _extract_presence, _extract_edges) would produce different stored data for a register whose
 register.json `modified` timestamp hasn't changed -- otherwise needs_reindex() only compares

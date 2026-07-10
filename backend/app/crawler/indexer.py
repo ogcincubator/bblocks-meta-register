@@ -159,7 +159,7 @@ async def build_search_content(
     register_info: RegisterInfo,
     register_json: dict,
     indexed_ids: list[str],
-) -> tuple[list, list[list[float]], list[dict]]:
+) -> tuple[list, list[list[float]], list[dict], dict[str, str]]:
     """Network-only half of search-content indexing (chunk fetching + embedding calls) -- kept
     separate from write_search_content() below so callers can run it *outside* the DB session
     lock (see app/crawler/orchestrator.py): both are slow, non-DB I/O, and holding the
@@ -169,9 +169,9 @@ async def build_search_content(
     accepted_bblocks = [b for b in register_json.get("bblocks", []) if b.get("itemIdentifier") in indexed_ids_set]
     filtered_register_json = {**register_json, "bblocks": accepted_bblocks}
 
-    chunks = await build_register_chunks(client, register_info, filtered_register_json)
+    chunks, descriptions = await build_register_chunks(client, register_info, filtered_register_json)
     embeddings = await embedding_provider.embed_documents([chunk.text for chunk in chunks]) if chunks else []
-    return chunks, embeddings, accepted_bblocks
+    return chunks, embeddings, accepted_bblocks, descriptions
 
 
 async def write_search_content(
@@ -180,6 +180,7 @@ async def write_search_content(
     chunks: list,
     embeddings: list[list[float]],
     accepted_bblocks: list[dict],
+    descriptions: dict[str, str],
 ) -> None:
     """Full-replace of this register's FTS5 keyword rows and vector chunks (docs/03's "when a
     register's content hash changes, that register's data is fully replaced" -- applies to the
@@ -192,14 +193,16 @@ async def write_search_content(
         await vector_store.upsert_chunks(session, chunks, embeddings)
 
     for raw_bblock in accepted_bblocks:
+        bblock_id = raw_bblock["itemIdentifier"]
         await keyword_index.upsert(
             session,
-            bblock_id=raw_bblock["itemIdentifier"],
+            bblock_id=bblock_id,
             register_id=register_info.register_id,
             org=register_info.org_id,
             item_class=raw_bblock.get("itemClass"),
             status=raw_bblock.get("status"),
-            name=raw_bblock.get("name", raw_bblock["itemIdentifier"]),
+            name=raw_bblock.get("name", bblock_id),
             abstract=raw_bblock.get("abstract"),
             tags=raw_bblock.get("tags") or [],
+            description=descriptions.get(bblock_id),
         )

@@ -1,5 +1,6 @@
 """FTS5-backed keyword index over bblocks (docs/03-indexing-and-search.md's "keyword pass":
-exact-ish matches on name/abstract/tags/itemIdentifier that embeddings are typically weak at).
+exact-ish matches on name/abstract/description/tags/itemIdentifier that embeddings are
+typically weak at).
 
 Not an "external content" FTS5 table synced via triggers off the `bblocks` table, because
 `bblocks.id` is a TEXT primary key and FTS5 external-content tables require an integer rowid
@@ -16,6 +17,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 FTS_TABLE = "bblocks_fts"
 
+# Single source of truth for the FTS5 table's columns, in declaration order: create_fts_table()
+# and the bm25() weights in search() are both generated from this so they can't drift apart.
+# Title match is the strongest relevance signal, abstract (short, curated) beats description
+# (long-form prose pulled from the bblock's own doc -- valuable for recall but noisier per
+# word), and unindexed filter columns get weight 0 since they carry no terms to score.
+_FTS_COLUMNS: dict[str, float] = {
+    "bblock_id": 0,  # UNINDEXED
+    "register_id": 0,  # UNINDEXED
+    "org": 0,  # UNINDEXED
+    "item_class": 0,  # UNINDEXED
+    "status": 0,  # UNINDEXED
+    "name": 5.0,
+    "abstract": 2.0,
+    "tags": 1.0,
+    "item_identifier": 1.0,
+    "description": 1.0,
+}
+_UNINDEXED_COLUMNS = {"bblock_id", "register_id", "org", "item_class", "status"}
+
 
 @dataclass(frozen=True)
 class KeywordHit:
@@ -25,21 +45,10 @@ class KeywordHit:
 
 def create_fts_table(conn) -> None:
     """Sync helper for use inside Alembic migrations / test setup (raw DBAPI connection)."""
-    conn.execute(
-        f"""
-        CREATE VIRTUAL TABLE IF NOT EXISTS {FTS_TABLE} USING fts5(
-            bblock_id UNINDEXED,
-            register_id UNINDEXED,
-            org UNINDEXED,
-            item_class UNINDEXED,
-            status UNINDEXED,
-            name,
-            abstract,
-            tags,
-            item_identifier
-        )
-        """
+    columns = ",\n            ".join(
+        f"{name} UNINDEXED" if name in _UNINDEXED_COLUMNS else name for name in _FTS_COLUMNS
     )
+    conn.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS {FTS_TABLE} USING fts5(\n            {columns}\n        )")
 
 
 async def upsert(
@@ -53,6 +62,7 @@ async def upsert(
     name: str,
     abstract: str | None,
     tags: list[str],
+    description: str | None = None,
 ) -> None:
     await session.execute(
         text(f"DELETE FROM {FTS_TABLE} WHERE bblock_id = :bblock_id"), {"bblock_id": bblock_id}
@@ -61,9 +71,9 @@ async def upsert(
         text(
             f"""
             INSERT INTO {FTS_TABLE}
-                (bblock_id, register_id, org, item_class, status, name, abstract, tags, item_identifier)
+                (bblock_id, register_id, org, item_class, status, name, abstract, tags, item_identifier, description)
             VALUES
-                (:bblock_id, :register_id, :org, :item_class, :status, :name, :abstract, :tags, :item_identifier)
+                (:bblock_id, :register_id, :org, :item_class, :status, :name, :abstract, :tags, :item_identifier, :description)
             """
         ),
         {
@@ -76,6 +86,7 @@ async def upsert(
             "abstract": abstract or "",
             "tags": " ".join(tags),
             "item_identifier": bblock_id,
+            "description": description or "",
         },
     )
 
@@ -122,10 +133,11 @@ async def search(
         conditions.append("status = :status")
         params["status"] = status
 
+    weights = ", ".join(str(w) for w in _FTS_COLUMNS.values())
     result = await session.execute(
         text(
             f"""
-            SELECT bblock_id, bm25({FTS_TABLE}) AS score
+            SELECT bblock_id, bm25({FTS_TABLE}, {weights}) AS score
             FROM {FTS_TABLE}
             WHERE {' AND '.join(conditions)}
             ORDER BY score
