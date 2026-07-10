@@ -42,6 +42,16 @@ async def test_register_change_detection_field(db_session):
     assert await registers_repo.get_register_modified(db_session, "missing/register") is None
 
 
+async def test_register_reindex_state(db_session):
+    from app.crawler.change_detection import INDEXER_VERSION
+
+    await _seed_org_and_register(db_session)
+    modified, indexer_version = await registers_repo.get_register_reindex_state(db_session, "ogc/main")
+    assert modified == "2026-01-01T00:00:00Z"
+    assert indexer_version == INDEXER_VERSION
+    assert await registers_repo.get_register_reindex_state(db_session, "missing/register") == (None, None)
+
+
 async def test_register_status_lifecycle(db_session):
     await _seed_org_and_register(db_session)
     register = await registers_repo.get_register(db_session, "ogc/main")

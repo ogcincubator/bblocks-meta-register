@@ -1,4 +1,4 @@
-from app.crawler.change_detection import needs_reindex
+from app.crawler.change_detection import INDEXER_VERSION, needs_reindex
 from app.crawler.discovery import Discovery, OrgInfo, RegisterInfo, _parse_registers
 from app.crawler.indexer import _extract_presence, index_register
 from app.crawler.orphans import cleanup_orphans
@@ -26,9 +26,12 @@ def test_parse_registers_skips_non_alias_keys():
 
 
 def test_needs_reindex():
-    assert needs_reindex(None, "2026-01-01T00:00:00Z") is True
-    assert needs_reindex("2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z") is False
-    assert needs_reindex("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z") is True
+    assert needs_reindex(None, "2026-01-01T00:00:00Z", INDEXER_VERSION) is True
+    assert needs_reindex("2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", INDEXER_VERSION) is False
+    assert needs_reindex("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z", INDEXER_VERSION) is True
+    # A stored indexer_version older than the code's current INDEXER_VERSION forces a reindex
+    # even when `modified` is unchanged -- see change_detection.py's INDEXER_VERSION docstring.
+    assert needs_reindex("2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", INDEXER_VERSION - 1) is True
 
 
 def test_extract_presence_flattens_shacl_shapes_by_target_bblock():
@@ -107,6 +110,7 @@ async def test_set_register_modified_advances_change_detection_field(db_session)
 
     register = await get_register(db_session, "ogc/main")
     assert register.modified == "2026-01-01T00:00:00Z"
+    assert register.indexer_version == INDEXER_VERSION
 
 
 async def test_index_register_rejects_identifier_conflict(db_session):

@@ -20,7 +20,7 @@ from app.db.base import session_scope
 from app.repositories.crawl_status import finish_run, start_run
 from app.repositories.orgs import upsert_org
 from app.repositories.registers import (
-    get_register_modified,
+    get_register_reindex_state,
     mark_register_crawling,
     record_crawl_result,
     set_register_modified,
@@ -42,10 +42,12 @@ async def _crawl_one_register(client, semaphore: asyncio.Semaphore, register_inf
             register_json = await fetch_register(client, register_info.register_url)
 
             async with session_scope() as session:
-                stored_modified = await get_register_modified(session, register_info.register_id)
+                stored_modified, stored_indexer_version = await get_register_reindex_state(
+                    session, register_info.register_id
+                )
                 fetched_modified = register_json.get("modified")
 
-                if not needs_reindex(stored_modified, fetched_modified):
+                if not needs_reindex(stored_modified, fetched_modified, stored_indexer_version):
                     logger.info("Register %s unchanged, skipping reindex", register_info.register_id)
                     await record_crawl_result(session, register_info.register_id, status="ok")
                     await finish_run(session, run_id, status="skipped")

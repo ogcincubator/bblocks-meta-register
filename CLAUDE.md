@@ -85,6 +85,13 @@ provider), `app/services` (dependency graph traversal), `app/mcp` (see below). T
 Run locally: `poetry run uvicorn app.main:app --reload --port 8000` (from `backend/`). This runs Alembic migrations
 on startup, starts the register crawl loop, and mounts everything below.
 
+`needs_reindex()` (`app/crawler/change_detection.py`) skips a register whose upstream `register.json` `modified`
+timestamp hasn't changed — a bug in *this repo's* extraction/transform logic (e.g. `app/crawler/indexer.py`'s
+`_extract_presence`/`_extract_edges`) would otherwise leave every already-crawled register stuck with the old,
+wrong stored data until its upstream content happens to change next. Bump `INDEXER_VERSION` in
+`change_detection.py` whenever such a change is made — every register is force-reindexed on the next crawl cycle
+regardless of `modified` until its `registers.indexer_version` column catches up.
+
 ### MCP server (`app/mcp/server.py`)
 
 A FastMCP server exposing the same catalog (search/browse/detail/dependency-traversal across orgs → registers →

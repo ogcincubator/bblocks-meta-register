@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.crawler.change_detection import INDEXER_VERSION
 from app.db.models import Register
 
 
@@ -51,6 +52,16 @@ async def get_register_modified(session: AsyncSession, register_id: str) -> str 
     return result.scalar_one_or_none()
 
 
+async def get_register_reindex_state(session: AsyncSession, register_id: str) -> tuple[str | None, int | None]:
+    """(modified, indexer_version) pair for needs_reindex() -- lightweight lookup mirroring
+    get_register_modified(), extended with the indexer-code-version field."""
+    result = await session.execute(
+        select(Register.modified, Register.indexer_version).where(Register.id == register_id)
+    )
+    row = result.one_or_none()
+    return (row.modified, row.indexer_version) if row is not None else (None, None)
+
+
 async def upsert_register(
     session: AsyncSession,
     *,
@@ -82,10 +93,12 @@ async def set_register_modified(session: AsyncSession, register_id: str, modifie
     _crawl_one_register(), never from index_register(), so a failure partway through the
     pipeline (e.g. Ollama unreachable during embedding) leaves `modified` at its old value and
     the register is retried on the next crawl cycle instead of being wrongly skipped as
-    unchanged."""
+    unchanged. Also stamps indexer_version with the current INDEXER_VERSION, since reaching
+    this point means the register was reindexed with today's indexer code."""
     register = await session.get(Register, register_id)
     if register is not None:
         register.modified = modified
+        register.indexer_version = INDEXER_VERSION
 
 
 async def mark_register_crawling(session: AsyncSession, register_id: str) -> None:
