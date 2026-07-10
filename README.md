@@ -44,7 +44,8 @@ database on startup.
 
 Exposes:
 - REST: `/orgs`, `/registers`, `/bblocks` (hybrid keyword + semantic search via `?q=`), `/admin/*`
-- MCP server at `/mcp` (search/browse/detail tools plus dependency-graph traversal), for use by LLM tooling
+- MCP server at `/mcp` (search/browse/detail tools plus dependency-graph traversal), for use by LLM tooling —
+  autodiscoverable via `/.well-known/mcp.json` and the `x-mcp` extension on `/openapi.json`
 
 ## Frontend
 

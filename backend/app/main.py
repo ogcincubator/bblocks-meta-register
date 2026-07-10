@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 
 from app.api import admin, bblocks, orgs, registers
@@ -58,6 +59,47 @@ app.include_router(registers.router)
 app.include_router(bblocks.router)
 app.include_router(admin.router)
 app.mount("/mcp", mcp_app)
+
+
+# There's no ratified ".well-known" schema for MCP server discovery yet, so this mirrors the
+# `mcpServers` map shape that `claude mcp add`/Claude Desktop configs and most existing MCP
+# directory crawlers already expect, keyed by server name, rather than inventing a new one.
+@app.get("/.well-known/mcp.json", include_in_schema=False)
+async def mcp_manifest(request: Request) -> JSONResponse:
+    mcp_url = str(request.base_url).rstrip("/") + "/mcp"
+    return JSONResponse(
+        {
+            "mcpServers": {
+                mcp.name: {
+                    "url": mcp_url,
+                    "transport": "streamable-http",
+                    "description": mcp.instructions,
+                }
+            }
+        }
+    )
+
+
+# FastAPI/OpenAPI has no built-in field for "here's an MCP server alongside this REST API" --
+# `x-mcp` is a non-standard vendor extension (OpenAPI reserves the `x-` prefix for exactly this),
+# picked up by tooling that knows to look for it but harmless to everyone else.
+def _custom_openapi() -> dict:
+    if app.openapi_schema is None:
+        app.openapi_schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            routes=app.routes,
+        )
+        app.openapi_schema["info"]["x-mcp"] = {
+            "url": "/mcp",
+            "wellKnown": "/.well-known/mcp.json",
+            "transport": "streamable-http",
+            "description": mcp.instructions,
+        }
+    return app.openapi_schema
+
+
+app.openapi = _custom_openapi
 
 
 @app.exception_handler(Exception)
