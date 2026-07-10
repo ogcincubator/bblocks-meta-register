@@ -94,6 +94,7 @@ async def _crawl_one_register(client, semaphore: asyncio.Semaphore, register_inf
                 await record_crawl_result(session, register_info.register_id, status="ok")
                 await finish_run(session, run_id, status="ok")
                 await session.commit()
+            logger.info("Finished crawling register %s", register_info.register_id)
         except Exception as exc:  # noqa: BLE001 - failure isolation: log+skip, never abort the cycle
             logger.exception("Failed to crawl register %s", register_info.register_id)
             async with session_scope() as session:
@@ -145,6 +146,7 @@ async def run_crawl_cycle(only_register_id: str | None = None) -> None:
         async with session_scope() as session:
             await finish_run(session, cycle_run_id, status="ok")
             await session.commit()
+        logger.info("Crawl cycle finished (%d registers)", len(registers))
     except Exception as exc:  # noqa: BLE001
         logger.exception("Crawl cycle failed")
         async with session_scope() as session:
