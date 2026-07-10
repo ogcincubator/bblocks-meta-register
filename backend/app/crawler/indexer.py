@@ -49,8 +49,9 @@ def _extract_edges(raw_bblock: dict) -> list[tuple[str, str]]:
 
 
 def _extract_presence(raw_bblock: dict) -> tuple[dict, str | None, list[str]]:
-    """schema/shaclShapes are objects keyed by media type in real register.json output, not
-    a single URL -- presence is "non-empty", not "field is set"."""
+    """schema is an object keyed by media type; shaclShapes is an object keyed by the bblock
+    identifier the shapes apply to, each value a list of shape URLs -- presence is
+    "non-empty", not "field is set"."""
     schema_urls = raw_bblock.get("schema")
     schema_urls = schema_urls if isinstance(schema_urls, dict) else {}
 
@@ -58,7 +59,10 @@ def _extract_presence(raw_bblock: dict) -> tuple[dict, str | None, list[str]]:
 
     shacl_shapes = raw_bblock.get("shaclShapes")
     if isinstance(shacl_shapes, dict):
-        shacl_shapes_urls = list(shacl_shapes.values())
+        # Keyed by the bblock identifier the shapes apply to (itself or an imported block),
+        # each value a list of shape file URLs. Flatten rather than list(...values()), which
+        # would leave nested lists in shacl_shapes_urls.
+        shacl_shapes_urls = [url for urls in shacl_shapes.values() for url in urls]
     elif isinstance(shacl_shapes, list):
         shacl_shapes_urls = shacl_shapes
     else:

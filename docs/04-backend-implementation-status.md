@@ -116,8 +116,12 @@ Doc 03's keyword + semantic hybrid search, minus ontology-term boosting (see "Wh
   into `bblock_deps`/`register_deps` right after the source bblock/register was upserted via the ORM — without an
   explicit `flush()` first, the FK on the source side failed because the row wasn't actually in the database yet.
   This was the real cause of the FK errors seen during bring-up (a red herring initially pointed at concurrency).
-- **Real `register.json` differs from doc 02's idealized description**: `schema`/`shaclShapes` are objects keyed by
-  media type, not a single URL (presence = "non-empty", not "field is set"); `dependsOn`/`isProfileOf` targets are
+- **Real `register.json` differs from doc 02's idealized description**: `schema` is an object keyed by media type,
+  and `shaclShapes` is an object keyed by the target bblock identifier with each value a *list* of shape URLs --
+  neither is a single URL (presence = "non-empty", not "field is set"); `_extract_presence` in
+  `app/crawler/indexer.py` must flatten `shaclShapes`'s values, not just take `dict.values()`, or the flattening
+  breaks downstream consumers with a strict `list[str]` schema (e.g. the `get_bblock` MCP tool, which raised a
+  Pydantic validation error over nested single-element lists before this was fixed). `dependsOn`/`isProfileOf` targets are
   sometimes `bblocks://itemIdentifier` URIs and sometimes bare `itemIdentifier` strings in the wild (normalized by
   stripping the scheme in `app/crawler/indexer.py::_normalize_target_id`); there's no register-level `imports`
   field, so `register_deps` is derived entirely by rolling up `bblock_deps` edges to the registers their source/

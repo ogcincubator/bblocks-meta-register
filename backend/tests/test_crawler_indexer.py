@@ -1,6 +1,6 @@
 from app.crawler.change_detection import needs_reindex
 from app.crawler.discovery import Discovery, OrgInfo, RegisterInfo, _parse_registers
-from app.crawler.indexer import index_register
+from app.crawler.indexer import _extract_presence, index_register
 from app.crawler.orphans import cleanup_orphans
 from app.repositories.bblocks import get_bblock
 from app.repositories.conflicts import list_conflicts
@@ -29,6 +29,21 @@ def test_needs_reindex():
     assert needs_reindex(None, "2026-01-01T00:00:00Z") is True
     assert needs_reindex("2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z") is False
     assert needs_reindex("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z") is True
+
+
+def test_extract_presence_flattens_shacl_shapes_by_target_bblock():
+    # Real register.json output keys shaclShapes by the target bblock identifier the shapes
+    # apply to (itself or an imported block), with each value a list of shape URLs --
+    # list(dict.values()) alone would leave nested lists in shacl_shapes_urls, which broke
+    # the get_bblock MCP tool's `list[str]` schema validation.
+    raw_bblock = {
+        "shaclShapes": {
+            "ogc.main.a": ["https://x/a.shacl", "https://x/b.shacl"],
+            "ogc.main.imported": ["https://x/c.shacl"],
+        }
+    }
+    _, _, shacl_shapes_urls = _extract_presence(raw_bblock)
+    assert shacl_shapes_urls == ["https://x/a.shacl", "https://x/b.shacl", "https://x/c.shacl"]
 
 
 async def _seed_register(session, register_id="ogc/main", org_id="ogc"):

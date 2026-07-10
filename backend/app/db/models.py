@@ -1,6 +1,6 @@
 import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -41,6 +41,10 @@ class Register(Base):
     # register stuck in "crawling" rather than silently showing its last known-good status.
     # Never exposed via the public API/MCP -- see app/api/admin.py.
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending", server_default="pending")
+    # Indexer code version this register was last fully reindexed with -- see
+    # app.crawler.change_detection.INDEXER_VERSION. Lets needs_reindex() force a reindex when
+    # the indexer's extraction logic changed even though upstream `modified` didn't.
+    indexer_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     org: Mapped["Org"] = relationship(back_populates="registers")
     bblocks: Mapped[list["Bblock"]] = relationship(back_populates="register", cascade="all, delete-orphan")
@@ -62,10 +66,10 @@ class Bblock(Base):
     date_time_addition: Mapped[str | None] = mapped_column(String, nullable=True)
     date_of_last_change: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    # Presence/absence badges -- register.json's `schema`/`shaclShapes` are objects keyed
-    # by media type (not a single URL), so presence is "object/array is non-empty", stored
-    # as a precomputed boolean rather than re-derived from schema_urls/shacl_shapes_urls on
-    # every read.
+    # Presence/absence badges -- register.json's `schema` is an object keyed by media type,
+    # and `shaclShapes` is an object keyed by target bblock identifier (not a single URL), so
+    # presence is "object/array is non-empty", stored as a precomputed boolean rather than
+    # re-derived from schema_urls/shacl_shapes_urls on every read.
     has_schema: Mapped[bool] = mapped_column(default=False)
     has_ld_context: Mapped[bool] = mapped_column(default=False)
     has_shacl_shapes: Mapped[bool] = mapped_column(default=False)
