@@ -8,6 +8,8 @@ again on the next scheduled run.
 
 import asyncio
 import logging
+from collections import defaultdict, deque
+from urllib.parse import urlsplit
 
 from app.config import settings
 from app.crawler.change_detection import needs_reindex
@@ -28,6 +30,25 @@ from app.repositories.registers import (
 from app.search.embeddings import get_embedding_provider
 
 logger = logging.getLogger(__name__)
+
+
+def _interleave_by_host(registers: list[RegisterInfo]) -> list[RegisterInfo]:
+    """Reorders registers round-robin across hosts so that registers sharing a host (e.g. many
+    orgs on github.com/raw.githubusercontent.com) aren't clustered together. The worker pool
+    (see run_crawl_cycle) only bounds concurrency at the register level, and get_json's per-host
+    lock (app/crawler/http.py) serializes same-host requests -- if the pool happened to pick
+    several same-host registers at once, most of those worker slots would just sit blocked on
+    the host lock instead of making progress on a different host."""
+    by_host: dict[str, deque[RegisterInfo]] = defaultdict(deque)
+    for register in registers:
+        by_host[urlsplit(register.register_url).netloc].append(register)
+
+    ordered: list[RegisterInfo] = []
+    queues = list(by_host.values())
+    while queues:
+        ordered.extend(q.popleft() for q in queues)
+        queues = [q for q in queues if q]
+    return ordered
 
 
 async def _crawl_one_register(client, semaphore: asyncio.Semaphore, register_info: RegisterInfo) -> None:
@@ -105,6 +126,8 @@ async def run_crawl_cycle(only_register_id: str | None = None) -> None:
         registers = discovery.registers
         if only_register_id is not None:
             registers = [r for r in registers if r.register_id == only_register_id]
+        else:
+            registers = _interleave_by_host(registers)
 
         semaphore = asyncio.Semaphore(settings.crawl_worker_pool_size)
         async with make_client() as client:
