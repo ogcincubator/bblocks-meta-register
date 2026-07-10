@@ -4,10 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Early design stage. `backend/` is empty (no code yet). `frontend/` is a freshly scaffolded Nuxt app with no
-application logic beyond the default Vuetify CLI template. Read `docs/01-overall-architecture.md` and
-`docs/02-viewer-application.md` before making architectural decisions — they describe two related but distinct
-pieces of this project (see below), and the indexing/backend approach is explicitly noted as exploratory/TBD.
+`backend/` has a working FastAPI + crawler + hybrid-search scaffold (see `docs/04-backend-implementation-status.md`
+and the Backend section below) — it is no longer empty, despite what older parts of the architecture docs imply.
+`frontend/` is a freshly scaffolded Nuxt app with no application logic beyond the default Vuetify CLI template.
+Read `docs/01-overall-architecture.md` and `docs/02-viewer-application.md` before making architectural decisions —
+they describe two related but distinct pieces of this project (see below); treat their backend implementation
+details as historical intent rather than current fact, and prefer reading the actual code/`docs/04-*` for
+what's really there.
 
 ## What this repo is
 
@@ -72,10 +75,32 @@ that only the intended files are staged before committing.
 
 ## Backend (`backend/`)
 
-Not yet implemented. Per the architecture doc, the intended responsibilities are: discover registers via the
-meta-registry's `index.json`, fetch each register's compiled `register.json` plus underlying bblock sources, detect
-changes (ETag/hash/version) to scope reindexing, maintain a dependency graph (register→register, bblock→bblock)
-queryable in both directions, and serve a REST/GraphQL API to the frontend. Search is expected to be hybrid
-(embeddings for semantic/multilingual queries + conventional keyword filtering/faceting), with relational metadata
-in a conventional database separate from the vector store. FastAPI is the intended framework, per the docs, but no
-code exists yet to confirm conventions from.
+FastAPI app (async, SQLAlchemy + Alembic, poetry-managed — run `poetry run ...` for pytest/ruff/uvicorn, not raw
+`.venv/bin/python3`). Implements the crawler, dependency graph, and hybrid
+(embeddings + keyword) search described in `docs/02-viewer-application.md`; see `docs/04-backend-implementation-status.md`
+for what's built vs. still open. Structure: `app/api` (REST routes), `app/crawler`, `app/db` (models + Alembic
+migrations under `app/migrations`), `app/repositories`, `app/schemas`, `app/search` (hybrid search + embedding
+provider), `app/services` (dependency graph traversal), `app/mcp` (see below). Tests in `backend/tests/`.
+
+Run locally: `poetry run uvicorn app.main:app --reload --port 8000` (from `backend/`). This runs Alembic migrations
+on startup, starts the register crawl loop, and mounts everything below.
+
+### MCP server (`app/mcp/server.py`)
+
+A FastMCP server exposing the same catalog (search/browse/detail/dependency-traversal across orgs → registers →
+bblocks) as MCP tools for LLM agents, mounted at `/mcp` on the FastAPI app (streamable HTTP transport) rather than
+run as a separate process, so it shares the app's DB session factory. Tools: `search_bblocks` (hybrid
+keyword+semantic), `get_bblock`/`list_bblocks_tool`, `get_register`/`list_registers_tool`, `get_org`/`list_orgs_tool`,
+`bblock_dependencies`/`register_dependencies` (multi-hop graph traversal, either direction).
+
+To point a local Claude Code session at it for manual testing: start the server as above, then
+`claude mcp add --transport http bblocks-meta-register http://localhost:8000/mcp` — tools then show up as
+`mcp__bblocks-meta-register__*`. Automated tests live in `backend/tests/test_mcp_server.py` (monkeypatches
+`session_scope`/`get_embedding_provider` the same way `api_client` overrides the REST API's FastAPI dependencies).
+
+`mcp_allowed_hosts`/`mcp_allowed_origins` (`app/config.py`) gate the MCP endpoint's DNS-rebinding protection and
+are deliberately left unset by default — unlike `admin_api_key`, this is *not* a must-set-before-prod flag. DNS
+rebinding only matters when a server sits behind a trust boundary (localhost/internal-only) that a browser can
+still reach; this API is deliberately public and unauthenticated (same reasoning as the CORS `allow_origins=["*"]`
+in `app/main.py`), so there's no session/auth boundary for a rebinding attack to exploit. See the comment in
+`app/config.py` for the full reasoning if this ever needs revisiting.
