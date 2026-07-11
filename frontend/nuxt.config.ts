@@ -7,6 +7,9 @@ export default defineNuxtConfig({
 
   app: {
     head: {
+      link: [
+        { rel: 'icon', href: '/favicon.ico' },
+      ],
       style: [
         // vuetify-nuxt-module injects component <style> tags before the CSS array runs,
         // so layer order must be declared here to arrive first in the document.

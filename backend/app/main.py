@@ -2,11 +2,13 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from app.api import admin, bblocks, orgs, registers
 from app.db.migrate import run_migrations_to_head
@@ -42,7 +44,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 pass
 
 
-app = FastAPI(title="OGC Building Blocks Meta-Registry Viewer API", lifespan=lifespan)
+# docs_url is disabled here and re-defined below so the favicon can be swapped for the
+# project's own. FastAPI's auto-generated /docs route hardcodes fastapi.tiangolo.com's favicon
+# and only forwards swagger_ui_parameters (Swagger-UI-JS options, not this) from the FastAPI()
+# constructor -- swagger_favicon_url is only a get_swagger_ui_html() argument, so overriding the
+# route is the documented way to change it (see fastapi.tiangolo.com/how-to/configure-swagger-ui).
+app = FastAPI(
+    title="OGC Building Blocks Meta-Registry Viewer API",
+    lifespan=lifespan,
+    docs_url=None,
+)
 
 # Public API is read-only and unauthenticated by design (see docs/02-viewer-application.md), so
 # allowing any origin doesn't widen the actual attack surface -- it just lets the frontend call
@@ -59,6 +70,22 @@ app.include_router(registers.router)
 app.include_router(bblocks.router)
 app.include_router(admin.router)
 app.mount("/mcp", mcp_app)
+
+FAVICON_PATH = Path(__file__).parent / "static" / "favicon.ico"
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> FileResponse:
+    return FileResponse(FAVICON_PATH)
+
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html() -> HTMLResponse:
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Swagger UI",
+        swagger_favicon_url="/favicon.ico",
+    )
 
 
 # There's no ratified ".well-known" schema for MCP server discovery yet, so this mirrors the
