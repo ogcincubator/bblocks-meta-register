@@ -108,8 +108,13 @@ async def _crawl_one_register(client, semaphore: asyncio.Semaphore, register_inf
                 await session.commit()
             logger.info("Finished crawling register %s", register_info.register_id)
         except Exception as exc:  # noqa: BLE001 - failure isolation: log+skip, never abort the cycle
+            # This wraps the whole per-register pipeline (register.json fetch, indexing,
+            # chunking, embedding), so register_url below is always the register's register.json
+            # URL -- it is NOT necessarily the resource that raised; see the traceback for that.
             logger.exception(
-                "Failed to crawl register %s (%s)", register_info.register_id, register_info.register_url
+                "Failed to crawl register %s (register.json: %s)",
+                register_info.register_id,
+                register_info.register_url,
             )
             async with session_scope() as session:
                 await record_crawl_result(session, register_info.register_id, status="error", error=str(exc))

@@ -184,7 +184,11 @@ async def build_search_content(
     filtered_register_json = {**register_json, "bblocks": accepted_bblocks}
 
     chunks, descriptions, failed_bblock_ids = await build_register_chunks(client, register_info, filtered_register_json)
-    embeddings = await embedding_provider.embed_documents([chunk.text for chunk in chunks]) if chunks else []
+    embeddings = (
+        await embedding_provider.embed_documents([chunk.text for chunk in chunks], [chunk.key for chunk in chunks])
+        if chunks
+        else []
+    )
     return chunks, embeddings, accepted_bblocks, descriptions, failed_bblock_ids
 
 

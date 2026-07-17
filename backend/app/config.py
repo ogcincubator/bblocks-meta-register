@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     http_timeout_seconds: float = 30.0
     http_max_retries: int = 3
 
+    # Separate from http_timeout_seconds: embedding requests hit a self-hosted model server that
+    # may run CPU-only inference (no GPU), where a single embedding_batch_size-sized batch can
+    # legitimately take well over the generic HTTP timeout -- especially now that concurrent
+    # registers' embedding calls are serialized (see _ollama_request_lock in
+    # app/search/embeddings.py) rather than racing each other for the same CPU.
+    embedding_http_timeout_seconds: float = 120.0
+
     # Pre-shared key required on all /admin/* requests via the X-Admin-Api-Key header.
     # Left unset (None) means /admin is unprotected -- fine for local dev, but must be set
     # before this backend is reachable from anywhere untrusted.
@@ -51,7 +58,7 @@ class Settings(BaseSettings):
     openai_compatible_embedding_model: str | None = None
     openai_compatible_api_key: str | None = None
 
-    embedding_batch_size: int = 64
+    embedding_batch_size: int = 32
     search_keyword_candidates: int = 50
     search_semantic_candidates: int = 50
     # Users mostly describe a use case in natural language (often not English), not a curated
