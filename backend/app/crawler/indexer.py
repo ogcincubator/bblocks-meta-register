@@ -71,11 +71,16 @@ def _extract_presence(raw_bblock: dict) -> tuple[dict, str | None, list[str]]:
     return schema_urls, ld_context_url, shacl_shapes_urls
 
 
-async def index_register(session: AsyncSession, register_info: RegisterInfo, register_json: dict) -> list[str]:
-    """Full-replace relational indexing. Returns the itemIdentifiers actually accepted (i.e.
-    excluding any rejected for an identifier conflict) -- index_search_content() below uses
-    this to keep the FTS5/vector indexes limited to the same set of bblocks as the relational
-    tables, rather than re-deriving accepted-ness itself."""
+async def index_register(
+    session: AsyncSession, register_info: RegisterInfo, register_json: dict
+) -> tuple[list[str], list[str]]:
+    """Full-replace relational indexing. Returns (indexed_ids, failed_ids): indexed_ids is the
+    itemIdentifiers actually accepted (i.e. excluding any rejected for an identifier conflict) --
+    index_search_content() below uses this to keep the FTS5/vector indexes limited to the same
+    set of bblocks as the relational tables, rather than re-deriving accepted-ness itself.
+    failed_ids is the itemIdentifiers whose processing raised (e.g. a DB error) -- one bblock's
+    failure is logged and skipped rather than aborting the whole register, but the caller uses
+    this list to still mark the register as having errored, since its index is incomplete."""
     register_id = register_info.register_id
     logger.info("Indexing %d bblocks for register %s", len(register_json.get("bblocks", [])), register_id)
 
@@ -94,6 +99,7 @@ async def index_register(session: AsyncSession, register_info: RegisterInfo, reg
     await delete_bblocks_for_register(session, register_id)
 
     indexed_ids: list[str] = []
+    failed_ids: list[str] = []
     for raw_bblock in register_json.get("bblocks", []):
         bblock_id = raw_bblock.get("itemIdentifier")
         if not bblock_id:
@@ -116,28 +122,33 @@ async def index_register(session: AsyncSession, register_info: RegisterInfo, reg
             )
             continue
 
-        schema_urls, ld_context_url, shacl_shapes_urls = _extract_presence(raw_bblock)
-        await upsert_bblock(
-            session,
-            bblock_id=bblock_id,
-            register_id=register_id,
-            name=raw_bblock.get("name", bblock_id),
-            abstract=raw_bblock.get("abstract"),
-            status=raw_bblock.get("status"),
-            item_class=raw_bblock.get("itemClass"),
-            version=raw_bblock.get("version"),
-            tags=raw_bblock.get("tags") or [],
-            date_time_addition=raw_bblock.get("dateTimeAddition"),
-            date_of_last_change=raw_bblock.get("dateOfLastChange"),
-            has_schema=bool(schema_urls),
-            has_ld_context=bool(ld_context_url),
-            has_shacl_shapes=bool(shacl_shapes_urls),
-            schema_urls=schema_urls,
-            ld_context_url=ld_context_url,
-            shacl_shapes_urls=shacl_shapes_urls,
-            sources=raw_bblock.get("sources") or [],
-        )
-        await replace_bblock_deps(session, bblock_id, _extract_edges(raw_bblock))
+        try:
+            schema_urls, ld_context_url, shacl_shapes_urls = _extract_presence(raw_bblock)
+            await upsert_bblock(
+                session,
+                bblock_id=bblock_id,
+                register_id=register_id,
+                name=raw_bblock.get("name", bblock_id),
+                abstract=raw_bblock.get("abstract"),
+                status=raw_bblock.get("status"),
+                item_class=raw_bblock.get("itemClass"),
+                version=raw_bblock.get("version"),
+                tags=raw_bblock.get("tags") or [],
+                date_time_addition=raw_bblock.get("dateTimeAddition"),
+                date_of_last_change=raw_bblock.get("dateOfLastChange"),
+                has_schema=bool(schema_urls),
+                has_ld_context=bool(ld_context_url),
+                has_shacl_shapes=bool(shacl_shapes_urls),
+                schema_urls=schema_urls,
+                ld_context_url=ld_context_url,
+                shacl_shapes_urls=shacl_shapes_urls,
+                sources=raw_bblock.get("sources") or [],
+            )
+            await replace_bblock_deps(session, bblock_id, _extract_edges(raw_bblock))
+        except Exception:  # noqa: BLE001 - one bad bblock shouldn't abort the whole register
+            logger.exception("Failed to index bblock %s in register %s", bblock_id, register_id)
+            failed_ids.append(bblock_id)
+            continue
         indexed_ids.append(bblock_id)
 
     # Roll up bblock-level edges to register-level edges (register.json has no separate
@@ -150,7 +161,7 @@ async def index_register(session: AsyncSession, register_info: RegisterInfo, reg
                 register_edges.add((target_register_id, kind))
     await replace_register_deps(session, register_id, register_edges)
 
-    return indexed_ids
+    return indexed_ids, failed_ids
 
 
 async def build_search_content(
@@ -159,19 +170,22 @@ async def build_search_content(
     register_info: RegisterInfo,
     register_json: dict,
     indexed_ids: list[str],
-) -> tuple[list, list[list[float]], list[dict], dict[str, str]]:
+) -> tuple[list, list[list[float]], list[dict], dict[str, str], list[str]]:
     """Network-only half of search-content indexing (chunk fetching + embedding calls) -- kept
     separate from write_search_content() below so callers can run it *outside* the DB session
     lock (see app/crawler/orchestrator.py): both are slow, non-DB I/O, and holding the
     app-wide `_db_lock` (app/db/base.py) across them serializes unrelated API reads (e.g.
-    /orgs) behind however long Ollama/register-content fetches take, not just DB writes."""
+    /orgs) behind however long Ollama/register-content fetches take, not just DB writes. The
+    trailing list[str] is the ids of bblocks whose main metadata failed to fetch (see
+    build_register_chunks) -- the caller uses it, alongside index_register()'s own failed_ids,
+    to mark the register as errored even though this call itself doesn't raise."""
     indexed_ids_set = set(indexed_ids)
     accepted_bblocks = [b for b in register_json.get("bblocks", []) if b.get("itemIdentifier") in indexed_ids_set]
     filtered_register_json = {**register_json, "bblocks": accepted_bblocks}
 
-    chunks, descriptions = await build_register_chunks(client, register_info, filtered_register_json)
+    chunks, descriptions, failed_bblock_ids = await build_register_chunks(client, register_info, filtered_register_json)
     embeddings = await embedding_provider.embed_documents([chunk.text for chunk in chunks]) if chunks else []
-    return chunks, embeddings, accepted_bblocks, descriptions
+    return chunks, embeddings, accepted_bblocks, descriptions, failed_bblock_ids
 
 
 async def write_search_content(

@@ -297,7 +297,7 @@ async def test_build_register_chunks_fetches_ld_context_and_examples():
     }
 
     async with httpx.AsyncClient() as client:
-        chunks, descriptions = await build_register_chunks(client, REGISTER_INFO, register_json)
+        chunks, descriptions, failed_ids = await build_register_chunks(client, REGISTER_INFO, register_json)
 
     by_type = {c.chunk_type: c for c in chunks}
     assert set(by_type) == {
@@ -335,7 +335,7 @@ async def test_build_register_chunks_falls_back_to_resolved_properties_without_l
     }
 
     async with httpx.AsyncClient() as client:
-        chunks, descriptions = await build_register_chunks(client, REGISTER_INFO, register_json)
+        chunks, descriptions, failed_ids = await build_register_chunks(client, REGISTER_INFO, register_json)
 
     schema_chunk = next(c for c in chunks if c.chunk_type == "bblock_schema")
     assert schema_chunk.text == "a\na.b"
@@ -352,7 +352,29 @@ async def test_build_register_chunks_skips_failed_fetch_without_raising():
     }
 
     async with httpx.AsyncClient() as client:
-        chunks, descriptions = await build_register_chunks(client, REGISTER_INFO, register_json)
+        chunks, descriptions, failed_ids = await build_register_chunks(client, REGISTER_INFO, register_json)
 
     assert [c.chunk_type for c in chunks] == ["bblock_core"]
     assert descriptions == {}
+    assert failed_ids == []
+
+
+@respx.mock
+async def test_build_register_chunks_skips_whole_bblock_when_main_metadata_fetch_fails():
+    respx.get("https://x/doc.json").mock(return_value=httpx.Response(500))
+    register_json = {
+        "bblocks": [
+            {
+                "itemIdentifier": "ogc.main.a",
+                "name": "A",
+                "documentation": {"json-full": {"url": "https://x/doc.json"}},
+            },
+        ]
+    }
+
+    async with httpx.AsyncClient() as client:
+        chunks, descriptions, failed_ids = await build_register_chunks(client, REGISTER_INFO, register_json)
+
+    assert chunks == []
+    assert descriptions == {}
+    assert failed_ids == ["ogc.main.a"]

@@ -83,6 +83,7 @@ async def get_json(client: httpx.AsyncClient, url: str) -> dict | list:
             response.raise_for_status()
             return response.json()
 
+    logger.error("Giving up on %s after %d attempts", url, settings.http_max_retries)
     raise last_exc or httpx.HTTPStatusError(
         f"Exhausted retries fetching {url}", request=None, response=None  # type: ignore[arg-type]
     )

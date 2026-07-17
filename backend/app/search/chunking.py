@@ -6,9 +6,13 @@ register.json itself: the JSON-LD context (`ldContext` URL, field name -> semant
 mappings) and the per-bblock `documentation.json-full` doc (which carries fully resolved
 `examples` and the bblock's full `description`, unlike register.json which only lists bblock
 metadata -- no per-bblock `description` field). Both are fetched here, one request each per
-bblock that has them -- a fetch failure for one bblock's extra content is logged and skipped
-(that bblock still gets its `bblock_core` chunk), not allowed to abort the whole register's
-reindex, matching the crawler's existing per-register failure isolation (see
+bblock that has them. `json-full` is this bblock's main metadata document, so a failure to
+fetch or process it is *not* best-effort -- the whole bblock is logged and skipped (no chunks
+at all for it this cycle) rather than silently emitting a description-less chunk. `ldContext`
+and `resolvedSchemaProperties`, by contrast, only feed the `bblock_schema` chunk and are
+genuinely best-effort: a failure there is logged and that one chunk is dropped, the rest of the
+bblock's chunks are still built. Either way, one bblock's failure is never allowed to abort the
+whole register's reindex, matching the crawler's existing per-register failure isolation (see
 app/crawler/orchestrator.py).
 
 `description` is kept as its own `bblock_description` chunk rather than folded into
@@ -145,12 +149,15 @@ def _bblock_usage_text(raw_bblock: dict, json_full_doc: dict) -> str:
 
 async def build_register_chunks(
     client: httpx.AsyncClient, register_info: RegisterInfo, register_json: dict
-) -> tuple[list[Chunk], dict[str, str]]:
-    """Returns the chunks to embed, plus a bblock_id -> description map (sourced from the same
+) -> tuple[list[Chunk], dict[str, str], list[str]]:
+    """Returns the chunks to embed, a bblock_id -> description map (sourced from the same
     json-full doc fetched below for the bblock_description chunk, not register.json -- which has
-    no per-bblock description field) for the caller to also feed into the FTS5 keyword index."""
+    no per-bblock description field) for the caller to also feed into the FTS5 keyword index, and
+    the ids of bblocks whose main (json-full) metadata failed to fetch -- the caller uses this to
+    surface the register as having partial results rather than a silent full success."""
     chunks: list[Chunk] = []
     descriptions: dict[str, str] = {}
+    failed_bblock_ids: list[str] = []
 
     summary_text = _register_summary_text(register_json)
     if summary_text:
@@ -181,11 +188,18 @@ async def build_register_chunks(
         if json_full_url:
             try:
                 fetched = await get_json(client, json_full_url)
-            except httpx.HTTPError as exc:
-                logger.warning("Failed to fetch json-full doc for %s: %s", bblock_id, exc)
-            else:
-                if isinstance(fetched, dict):
-                    json_full_doc = fetched
+            except Exception as exc:  # noqa: BLE001 - main metadata: skip this bblock, not best-effort
+                logger.error(
+                    "Skipping bblock %s (register %s): failed to fetch main metadata from %s: %s",
+                    bblock_id,
+                    register_info.register_id,
+                    json_full_url,
+                    exc,
+                )
+                failed_bblock_ids.append(bblock_id)
+                continue
+            if isinstance(fetched, dict):
+                json_full_doc = fetched
 
         core_text = _bblock_core_text(raw_bblock)
         if core_text:
@@ -223,8 +237,8 @@ async def build_register_chunks(
         if ld_context_url:
             try:
                 ld_context_json = await get_json(client, ld_context_url)
-            except httpx.HTTPError as exc:
-                logger.warning("Failed to fetch ldContext for %s: %s", bblock_id, exc)
+            except Exception as exc:  # noqa: BLE001 - best-effort: skip this chunk, keep the bblock
+                logger.warning("Failed to fetch ldContext for %s from %s: %s", bblock_id, ld_context_url, exc)
             else:
                 if isinstance(ld_context_json, dict):
                     schema_text = _bblock_schema_text(ld_context_json)
@@ -234,8 +248,10 @@ async def build_register_chunks(
             if resolved_url:
                 try:
                     resolved_json = await get_json(client, resolved_url)
-                except httpx.HTTPError as exc:
-                    logger.warning("Failed to fetch resolvedSchemaProperties for %s: %s", bblock_id, exc)
+                except Exception as exc:  # noqa: BLE001 - best-effort: skip this chunk, keep the bblock
+                    logger.warning(
+                        "Failed to fetch resolvedSchemaProperties for %s from %s: %s", bblock_id, resolved_url, exc
+                    )
                 else:
                     if isinstance(resolved_json, dict):
                         schema_text = _resolved_properties_text(resolved_json)
@@ -269,4 +285,4 @@ async def build_register_chunks(
                 )
             )
 
-    return chunks, descriptions
+    return chunks, descriptions, failed_bblock_ids
