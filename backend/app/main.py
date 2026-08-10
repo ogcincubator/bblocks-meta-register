@@ -80,11 +80,15 @@ async def favicon() -> FileResponse:
 
 
 @app.get("/docs", include_in_schema=False)
-async def custom_swagger_ui_html() -> HTMLResponse:
+async def custom_swagger_ui_html(request: Request) -> HTMLResponse:
+    # Mirror FastAPI's own swagger_ui_html handler (fastapi.applications.FastAPI.setup): prepend
+    # root_path so the URLs embedded in the HTML resolve correctly when this app is served behind
+    # a reverse proxy under a subpath (root_path is set via uvicorn --root-path, see Dockerfile).
+    root_path = request.scope.get("root_path", "").rstrip("/")
     return get_swagger_ui_html(
-        openapi_url=app.openapi_url,
+        openapi_url=root_path + app.openapi_url,
         title=f"{app.title} - Swagger UI",
-        swagger_favicon_url="/favicon.ico",
+        swagger_favicon_url=root_path + "/favicon.ico",
     )
 
 
