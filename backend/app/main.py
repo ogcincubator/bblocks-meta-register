@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.api import admin, bblocks, orgs, registers
 from app.db.migrate import run_migrations_to_head
@@ -18,6 +19,28 @@ from app.scheduler import crawl_loop
 
 configure_logging()
 logger = logging.getLogger(__name__)
+
+
+class _MCPTrailingSlashMiddleware:
+    """Starlette's `Mount("/mcp", ...)` below 307-redirects a bare `POST /mcp` to `/mcp/` -- a
+    trailing-slash mismatch against the mounted sub-app's own root route. Rewrite the path in
+    the ASGI scope instead, before routing ever sees it, so a request to the bare path gets a
+    single response instead of a redirect round trip: MCP's own resource-canonicalization
+    guidance favors URIs *without* a trailing slash, so clients following that convention would
+    otherwise redirect on every call, and not every HTTP client reliably replays a POST body
+    across a 307.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["path"] == "/mcp":
+            scope = dict(scope)
+            scope["path"] = "/mcp/"
+            if scope.get("raw_path"):
+                scope["raw_path"] = scope["raw_path"] + b"/"
+        await self.app(scope, receive, send)
 
 # streamable_http_app() must be called before mcp.session_manager is accessible (it lazily
 # creates the session manager on first call) -- see app/mcp/server.py's module docstring for
@@ -64,6 +87,7 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["*"],
 )
+app.add_middleware(_MCPTrailingSlashMiddleware)
 
 app.include_router(orgs.router)
 app.include_router(registers.router)
