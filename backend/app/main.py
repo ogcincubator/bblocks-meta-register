@@ -29,15 +29,21 @@ class _MCPTrailingSlashMiddleware:
     guidance favors URIs *without* a trailing slash, so clients following that convention would
     otherwise redirect on every call, and not every HTTP client reliably replays a POST body
     across a 307.
+
+    uvicorn's `--root-path` (see Dockerfile) prepends root_path onto `scope["path"]` itself for
+    every request, not just onto the separate `scope["root_path"]` field -- Starlette's router
+    strips it back off again before matching routes, but this middleware runs before that, so it
+    has to account for the same prefix by hand.
     """
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "http" and scope["path"] == "/mcp":
+        bare_path = scope.get("root_path", "") + "/mcp"
+        if scope["type"] == "http" and scope["path"] == bare_path:
             scope = dict(scope)
-            scope["path"] = "/mcp/"
+            scope["path"] = bare_path + "/"
             if scope.get("raw_path"):
                 scope["raw_path"] = scope["raw_path"] + b"/"
         await self.app(scope, receive, send)
