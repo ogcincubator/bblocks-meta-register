@@ -58,6 +58,56 @@
     <v-main>
       <nuxt-page />
     </v-main>
+
+    <v-footer
+      border
+      class="flex-col gap-2 py-4"
+    >
+      <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm">
+        <a
+          class="inline-flex items-center gap-1 opacity-70 no-underline hover:opacity-100"
+          :href="`${apiBase}/docs`"
+          rel="noopener"
+          target="_blank"
+        >
+          <v-icon
+            icon="mdi-api"
+            size="16"
+          />
+          REST API
+        </a>
+
+        <a
+          class="inline-flex items-center gap-1 opacity-70 no-underline hover:opacity-100"
+          :href="`${apiBase}/mcp`"
+          rel="noopener"
+          target="_blank"
+        >
+          <v-icon
+            icon="mdi-robot-outline"
+            size="16"
+          />
+          MCP server
+        </a>
+
+        <a
+          class="inline-flex items-center gap-1 opacity-70 no-underline hover:opacity-100"
+          href="https://github.com/ogcincubator/bblocks-meta-register"
+          rel="noopener"
+          target="_blank"
+        >
+          <v-icon
+            icon="mdi-github"
+            size="16"
+          />
+          GitHub
+        </a>
+      </div>
+
+      <div class="text-xs opacity-50">
+        Free to reuse — REST API and MCP server open to any client, no key required.
+      </div>
+    </v-footer>
   </v-app>
 </template>
 
@@ -70,6 +120,7 @@ useHead({
 
 const query = ref('');
 const router = useRouter();
+const apiBase = useRuntimeConfig().public.apiBase;
 
 function runSearch() {
   if (!query.value.trim()) {

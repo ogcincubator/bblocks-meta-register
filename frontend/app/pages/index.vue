@@ -84,6 +84,78 @@
         </v-card>
       </v-col>
     </v-row>
+
+    <v-divider class="my-10" />
+
+    <div class="text-center mb-6">
+      <h2 class="text-2xl mb-2">
+        Build on this catalog
+      </h2>
+
+      <p class="opacity-70">
+        This index is free to reuse — query it from your own app, script, or AI agent.
+      </p>
+    </div>
+
+    <v-row>
+      <v-col
+        cols="12"
+        sm="6"
+      >
+        <v-card
+          :href="`${apiBase}/docs`"
+          height="100%"
+          rel="noopener"
+          target="_blank"
+          variant="outlined"
+        >
+          <v-card-item>
+            <template #prepend>
+              <v-icon
+                icon="mdi-api"
+                size="32"
+              />
+            </template>
+
+            <v-card-title>REST API</v-card-title>
+          </v-card-item>
+
+          <v-card-text class="opacity-70">
+            Browse the interactive Swagger docs and call the read-only, unauthenticated JSON
+            API directly from your own code.
+          </v-card-text>
+        </v-card>
+      </v-col>
+
+      <v-col
+        cols="12"
+        sm="6"
+      >
+        <v-card
+          :href="`${apiBase}/mcp`"
+          height="100%"
+          rel="noopener"
+          target="_blank"
+          variant="outlined"
+        >
+          <v-card-item>
+            <template #prepend>
+              <v-icon
+                icon="mdi-robot-outline"
+                size="32"
+              />
+            </template>
+
+            <v-card-title>MCP server</v-card-title>
+          </v-card-item>
+
+          <v-card-text class="opacity-70">
+            Point an MCP-compatible AI agent (Claude, etc.) at this endpoint to search and
+            browse the catalog as tool calls.
+          </v-card-text>
+        </v-card>
+      </v-col>
+    </v-row>
   </v-container>
 </template>
 
@@ -92,6 +164,7 @@ import type { OrgSummary } from '~/types/api';
 
 const query = ref('');
 const router = useRouter();
+const apiBase = useRuntimeConfig().public.apiBase;
 
 const { data: orgs, status, error } = useApi<OrgSummary[]>('/orgs');
 
