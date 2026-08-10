@@ -32,5 +32,14 @@ EXPOSE 8000
 # since routes are still registered at "/", "/bblocks", etc.
 ENV ROOT_PATH=""
 
+# --proxy-headers makes uvicorn trust X-Forwarded-Proto/X-Forwarded-For from the reverse proxy
+# in front of this container -- without it, request.url.scheme is always "http" (this container
+# never terminates TLS itself), so e.g. the automatic /mcp -> /mcp/ redirect Starlette's Mount
+# issues for a trailing-slash mismatch gets built as an http:// Location even when the original
+# request came in over https, which most strict HTTPS clients (correctly) refuse to follow as a
+# downgrade. --forwarded-allow-ips="*" is safe here specifically because this API is
+# deliberately public and unauthenticated already (see app/config.py's mcp_allowed_hosts
+# comment) -- there's no auth decision a spoofed forwarded header could subvert.
+#
 # Migrations run in-process on startup (see app/main.py's lifespan), not as a separate step.
-CMD ["bash", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --root-path \"${ROOT_PATH%/}\""]
+CMD ["bash", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --root-path \"${ROOT_PATH%/}\" --proxy-headers --forwarded-allow-ips='*'"]
