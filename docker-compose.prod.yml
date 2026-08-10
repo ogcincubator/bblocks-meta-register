@@ -33,6 +33,25 @@ services:
     entrypoint: ["ollama", "pull", "nomic-embed-text-v2-moe:latest"]
     restart: "no"
 
+  # No-op OAuth server that exists only to satisfy Claude.ai's custom MCP connector, which
+  # attempts Dynamic Client Registration even against MCP servers that advertise no auth
+  # (see oauth-stub/README.md and oauth-stub/main.py). It grants access to anyone who asks
+  # and is not a real security boundary -- the backend below never validates its tokens.
+  oauth-stub:
+    image: ghcr.io/ogcincubator/bblocks-meta-register/oauth-stub:${IMAGE_TAG:-latest}
+    environment:
+      # Both required; must match wherever this is reverse-proxied (see oauth-stub/README.md
+      # for the exact Apache ProxyPass rules and how these two values map to them).
+      OAUTH_STUB_ISSUER: ${OAUTH_STUB_ISSUER:?set OAUTH_STUB_ISSUER in .env, e.g. https://defs-dev.opengis.net/bblocks-oauth-stub}
+      OAUTH_STUB_RESOURCE_URL: ${OAUTH_STUB_RESOURCE_URL:?set OAUTH_STUB_RESOURCE_URL in .env, e.g. https://defs-dev.opengis.net/bblocks-meta-register-backend/mcp}
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+
   backend:
     image: ghcr.io/ogcincubator/bblocks-meta-register/backend:${IMAGE_TAG:-latest}
     depends_on:

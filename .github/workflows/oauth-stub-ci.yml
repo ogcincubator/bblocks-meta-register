@@ -1,0 +1,27 @@
+name: OAuth stub CI
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "oauth-stub/**"
+      - ".github/workflows/oauth-stub-ci.yml"
+  pull_request:
+    paths:
+      - "oauth-stub/**"
+      - ".github/workflows/oauth-stub-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker:
+    uses: ./.github/workflows/docker-build.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image-name: oauth-stub
+      context: oauth-stub
