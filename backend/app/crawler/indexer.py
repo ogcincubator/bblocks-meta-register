@@ -12,6 +12,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.crawler.discovery import RegisterInfo
+from app.repositories.bblock_uris import replace_bblock_uris
 from app.repositories.bblocks import delete_bblocks_for_register, get_owning_register_id, upsert_bblock
 from app.repositories.conflicts import record_conflict
 from app.repositories.deps import outgoing_bblock_deps, replace_bblock_deps, replace_register_deps
@@ -170,26 +171,29 @@ async def build_search_content(
     register_info: RegisterInfo,
     register_json: dict,
     indexed_ids: list[str],
-) -> tuple[list, list[list[float]], list[dict], dict[str, str], list[str]]:
+) -> tuple[list, list[list[float]], list[dict], dict[str, str], list[str], dict[str, list[tuple[str, str]]]]:
     """Network-only half of search-content indexing (chunk fetching + embedding calls) -- kept
     separate from write_search_content() below so callers can run it *outside* the DB session
     lock (see app/crawler/orchestrator.py): both are slow, non-DB I/O, and holding the
     app-wide `_db_lock` (app/db/base.py) across them serializes unrelated API reads (e.g.
     /orgs) behind however long Ollama/register-content fetches take, not just DB writes. The
-    trailing list[str] is the ids of bblocks whose main metadata failed to fetch (see
+    list[str] is the ids of bblocks whose main metadata failed to fetch (see
     build_register_chunks) -- the caller uses it, alongside index_register()'s own failed_ids,
-    to mark the register as errored even though this call itself doesn't raise."""
+    to mark the register as errored even though this call itself doesn't raise. The trailing
+    dict is the bblock_id -> (path, uri) semantic-binding map, see build_register_chunks."""
     indexed_ids_set = set(indexed_ids)
     accepted_bblocks = [b for b in register_json.get("bblocks", []) if b.get("itemIdentifier") in indexed_ids_set]
     filtered_register_json = {**register_json, "bblocks": accepted_bblocks}
 
-    chunks, descriptions, failed_bblock_ids = await build_register_chunks(client, register_info, filtered_register_json)
+    chunks, descriptions, failed_bblock_ids, bindings = await build_register_chunks(
+        client, register_info, filtered_register_json
+    )
     embeddings = (
         await embedding_provider.embed_documents([chunk.text for chunk in chunks], [chunk.key for chunk in chunks])
         if chunks
         else []
     )
-    return chunks, embeddings, accepted_bblocks, descriptions, failed_bblock_ids
+    return chunks, embeddings, accepted_bblocks, descriptions, failed_bblock_ids, bindings
 
 
 async def write_search_content(
@@ -199,11 +203,12 @@ async def write_search_content(
     embeddings: list[list[float]],
     accepted_bblocks: list[dict],
     descriptions: dict[str, str],
+    bindings: dict[str, list[tuple[str, str]]],
 ) -> None:
-    """Full-replace of this register's FTS5 keyword rows and vector chunks (docs/03's "when a
-    register's content hash changes, that register's data is fully replaced" -- applies to the
-    search indexes the same way it applies to the relational rows in index_register() above).
-    DB-only (see build_search_content() above for the network half)."""
+    """Full-replace of this register's FTS5 keyword rows, vector chunks, and bblock_uris rows
+    (docs/03's "when a register's content hash changes, that register's data is fully replaced"
+    -- applies to the search indexes the same way it applies to the relational rows in
+    index_register() above). DB-only (see build_search_content() above for the network half)."""
     await vector_store.delete_by_register(session, register_info.register_url)
     await keyword_index.delete_by_register(session, register_info.register_id)
 
@@ -224,3 +229,4 @@ async def write_search_content(
             tags=raw_bblock.get("tags") or [],
             description=descriptions.get(bblock_id),
         )
+        await replace_bblock_uris(session, bblock_id, bindings.get(bblock_id, []))

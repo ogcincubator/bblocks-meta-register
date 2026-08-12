@@ -9,9 +9,11 @@ from the code. Broad strokes only — read the docs above and the code itself fo
 - **Data model**: `orgs` → `registers` → `bblocks` hierarchy as SQLAlchemy ORM (real FKs, relationships), plus
   `bblock_deps`/`register_deps`/`identifier_conflicts`/`crawl_runs` as plain SQLAlchemy Core tables (no FK on the
   dependency edges' target side, by design — see doc 02's "Identifier conflicts" and dependency graph sections).
-  Migrations via Alembic, two revisions: `0001_initial.py` and `0002_register_status.py` (see "Migration
-  convention" below). `Register` also has an admin-only `status` field (`pending`/`crawling`/`ready`/`failed`,
-  distinct from the public `last_crawl_status`) — see "Crawler" below.
+  Migrations via Alembic, five revisions as of this writing (`0001_initial.py` through
+  `0005_bblock_uris.py` — see "Migration convention" below). `Register` also has an admin-only `status` field
+  (`pending`/`crawling`/`ready`/`failed`, distinct from the public `last_crawl_status`) — see "Crawler" below.
+  `bblock_uris` (`0005`, see below) is a reverse index of `(bblock_id, uri, path)` semantic-binding triples —
+  see [06-semantic-binding-lookup-plan.md](06-semantic-binding-lookup-plan.md).
 - **Crawler**: full pipeline per doc 02 including embeddings — discovery (`meta-register.json`/`meta-register-orgs.json`),
   per-register fetch, change detection (`modified` timestamp equality), full-replace indexing (relational rows +
   dependency edges + identifier-conflict rejection), search-content indexing (chunking + embeddings, see "Hybrid
@@ -30,16 +32,22 @@ from the code. Broad strokes only — read the docs above and the code itself fo
 - **API**: `/orgs`, `/registers`, `/bblocks` (list + detail, with outgoing/incoming dependency edges), `/admin/status`,
   `/admin/registers`, `/admin/conflicts`, `/admin/reindex` — matches doc 02's endpoint table. `/admin/*` requires an
   `X-Admin-Api-Key` header if `BBLOCKS_ADMIN_API_KEY` is set (unset = unprotected, fine for local dev only).
+  `GET /bblocks/by-uri?uri=&mode=exact|prefix|both` — exact/prefix lookup against `bblock_uris`, doc 06's semantic
+  binding lookup (registered ahead of `GET /bblocks/{identifier}` in the router so it isn't swallowed as an
+  `identifier` match); not part of doc 02's original endpoint table, added by doc 06.
   `CORSMiddleware` allows any origin on GET requests (`app/main.py`) — safe to leave permissive since the API is
   public/read-only by design, and it's what lets the frontend (see doc 05) call it directly without a dev proxy.
 - **`GET /bblocks?q=`** is doc 03's hybrid search (see below), not the earlier `LIKE` placeholder.
 - **MCP server** (`app/mcp/server.py`, doc 02's "MCP interface" section): mounted at `/mcp` on the same FastAPI
   app/process (not a separate server) via the official `mcp` Python SDK's streamable-HTTP ASGI app, so it shares
-  the process-global SQLite engine instead of needing its own DB connection handling. Nine tools: `search_bblocks`
-  (the hybrid search, for use-case/natural-language queries), `list_bblocks_tool` (plain filtered browse),
-  `get_bblock`/`get_register`/`get_org` (detail, same shape as the REST endpoints), `list_registers_tool`/
-  `list_orgs_tool`, and `bblock_dependencies`/`register_dependencies` (depth-limited BFS over the dependency edge
-  tables in either direction -- doc 02's "dependency traversal" tool, not exposed over REST at all). `/mcp` is
+  the process-global SQLite engine instead of needing its own DB connection handling. Eleven tools: `search_bblocks`
+  (the hybrid search, for use-case/natural-language queries), `find_bblocks_by_semantic_binding` (doc 06's
+  exact/prefix lookup against a known RDF/vocabulary URI or namespace — the tool docstring tells the agent to
+  prefer this over `search_bblocks` when a specific URI is already in hand), `list_bblocks_tool` (plain filtered
+  browse), `get_bblock`/`get_bblocks`/`get_register`/`get_org` (detail, same shape as the REST endpoints —
+  `get_bblocks` batches several ids in one call), `list_registers_tool`/`list_orgs_tool`, and
+  `bblock_dependencies`/`register_dependencies` (depth-limited BFS over the dependency edge tables in either
+  direction -- doc 02's "dependency traversal" tool, not exposed over REST at all). `/mcp` is
   unauthenticated and open to any client by default, same as `/orgs`/`/registers`/`/bblocks` -- deliberately, since
   the whole point is letting any LLM tooling reach it. `BBLOCKS_MCP_ALLOWED_HOSTS`/`BBLOCKS_MCP_ALLOWED_ORIGINS`
   (see `.env.example`) exist only as an optional Host/Origin allowlist if this ever needs restricting later; unset
@@ -76,6 +84,8 @@ Doc 03's keyword + semantic hybrid search, minus ontology-term boosting (see "Wh
   no URIs) when a bblock has no `ldContext` at all, so schema-only bblocks still get a `bblock_schema` chunk
   instead of silently getting none (hit in the wild: 1 of 25 bblocks in the `bblocks-examples` register). A fetch
   failure for one bblock's extra content is logged and skipped, not allowed to abort the register's reindex.
+  `resolvedSchemaProperties` is now fetched whenever `register.json` has it (not only as the `ldContext` fallback
+  above), since it's also the source of `bblock_uris` — see doc 06.
 - **Search service** (`service.py`): keyword pass (FTS5, bm25) + semantic pass (best chunk per bblock) merged so a
   keyword hit is guaranteed inclusion, `rank_score = max(keyword_score, semantic_score)`. Filters (`org`,
   `register`, `item_class`, `status`) apply identically to both passes before merging. Candidate pool size per pass
@@ -93,9 +103,11 @@ Doc 03's keyword + semantic hybrid search, minus ontology-term boosting (see "Wh
 
 ## What's deferred (not started)
 
-- **Ontology-term indexing and boosting** (doc 03's "Ontology-term indexing and boosting" section) — no
-  `ontologies`/`bblock_uris` tables, no boost pass in the search service. This also means the MCP server's
-  `search_bblocks` tool doesn't get ontology-term boosting either, since it shares the same `hybrid_search`.
+- **Ontology-term indexing and boosting** (doc 03's "Ontology-term indexing and boosting" section) — `bblock_uris`
+  itself is now built (doc 06: the table, crawler population, and a direct exact/prefix lookup endpoint/MCP tool),
+  but the rest of this feature isn't: no `ontologies` table, no term-embedding pipeline, no boost pass in the
+  search service. The MCP server's `search_bblocks` tool still doesn't get ontology-term boosting, since it shares
+  the same `hybrid_search`.
 - **CI** — no GitHub Actions workflow runs `pytest`/`ruff` yet.
 - **Docker** — `Dockerfile`/`.dockerignore` exist but the image has never actually been built/run; treat it as
   unverified until someone does `docker build` + `docker run` against it.

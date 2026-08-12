@@ -148,9 +148,12 @@ For a single register, per run:
 2. Fetch `register.json`, upsert the register's own relational row, and build+embed its `register_summary` chunk.
 3. For each bblock: upsert its relational row; fetch its JSON-LD context (if present) and full JSON content
    (description, examples) as needed; build the `bblock_core`, `bblock_description`, `bblock_schema`,
-   `bblock_usage` chunks; populate
-   `bblock_uris` from the JSON-LD context's field→URI mappings (also the raw material the dependency graph in
-   doc 02 draws on, though that's a distinct edge table keyed on `dependsOn`/`isProfileOf`, not on JSON-LD URIs).
+   `bblock_usage` chunks; populate `bblock_uris` from `resolvedProperties.json`'s `effectiveId` fields — **not**
+   the raw JSON-LD `@context`, whose term values can be unexpanded compact IRIs (CURIEs) rather than full URIs; see
+   [06-semantic-binding-lookup-plan.md](06-semantic-binding-lookup-plan.md) for the detailed format/extraction
+   notes and why the raw context isn't precise enough for exact-URI lookup (also the raw material the dependency
+   graph in doc 02 draws on, though that's a distinct edge table keyed on `dependsOn`/`isProfileOf`, not on
+   semantic-binding URIs).
 4. Batch-embed all collected chunk texts in one pass (fewer round trips to the embedding provider than
    per-bblock calls) and upsert into `sqlite-vec`.
 
@@ -164,9 +167,12 @@ On top of the relational tables already described in doc 02 (`orgs`, `registers`
 
 - **`sqlite-vec` virtual table** for chunk embeddings, with columns for the embedding vector plus the filtering
   metadata (`org`, `register_url`, `bblock_id`, `item_class`, `chunk_type`).
-- **`bblock_uris`** — reverse index of `(bblock_id, uri)` pairs from JSON-LD context field mappings. Used for
-  ontology-boost lookups (find bblocks using a given URI); a separate concern from the `dependsOn`/`isProfileOf`
-  dependency edges in doc 02, which come from `bblock.json` metadata directly rather than JSON-LD contexts.
+- **`bblock_uris`** — reverse index of `(bblock_id, uri, path)` triples, sourced from `resolvedProperties.json`'s
+  `effectiveId` fields (see [06-semantic-binding-lookup-plan.md](06-semantic-binding-lookup-plan.md)). Built, along
+  with a direct exact/prefix lookup endpoint and MCP tool on top of it; the ontology-term embedding/boost pass
+  described above that would also consume this table is still not built. A separate concern from the
+  `dependsOn`/`isProfileOf` dependency edges in doc 02, which come from `bblock.json` metadata directly rather than
+  semantic-binding URIs.
 - **`ontologies`** — one row per indexed ontology source (file path or URL), with term count and last-indexed
   timestamp, mirroring the per-register change-detection bookkeeping doc 02 describes.
 

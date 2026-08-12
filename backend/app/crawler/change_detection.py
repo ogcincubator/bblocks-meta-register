@@ -1,9 +1,15 @@
-INDEXER_VERSION = 2
+INDEXER_VERSION = 3
 """Bump this whenever a change to app/crawler/indexer.py's extraction/transform logic (e.g.
 _extract_presence, _extract_edges) would produce different stored data for a register whose
 register.json `modified` timestamp hasn't changed -- otherwise needs_reindex() only compares
 `modified` and would skip already-crawled registers forever, leaving stale data from the old
-logic in place until upstream content happens to change. See CLAUDE.md for the bump procedure."""
+logic in place until upstream content happens to change. See CLAUDE.md for the bump procedure.
+
+3: app/search/chunking.py now also populates bblock_uris (semantic binding reverse index) from
+resolvedSchemaProperties -- see docs/06-semantic-binding-lookup-plan.md. This lives in the
+search-content half of the pipeline, not indexer.py's relational extraction, but needs_reindex()
+gates the whole per-register pipeline (see orchestrator.py's _crawl_one_register), so the bump
+rule still applies."""
 
 
 def needs_reindex(stored_modified: str | None, fetched_modified: str | None, stored_indexer_version: int | None) -> bool:

@@ -1,5 +1,8 @@
 """Builds the per-register/per-bblock text chunks docs/03-indexing-and-search.md's "Chunking
-strategy" describes, ready to hand to an EmbeddingProvider and then a VectorStore.
+strategy" describes, ready to hand to an EmbeddingProvider and then a VectorStore. Also builds
+the (path, uri) semantic-binding pairs that feed the `bblock_uris` reverse index (see
+docs/06-semantic-binding-lookup-plan.md) -- a query-time lookup, not a search chunk, but sourced
+from the same `resolvedSchemaProperties` fetch this module already does for `bblock_schema`.
 
 `bblock_schema`, `bblock_description` and `bblock_usage` need content that isn't in
 register.json itself: the JSON-LD context (`ldContext` URL, field name -> semantic URI
@@ -9,11 +12,16 @@ metadata -- no per-bblock `description` field). Both are fetched here, one reque
 bblock that has them. `json-full` is this bblock's main metadata document, so a failure to
 fetch or process it is *not* best-effort -- the whole bblock is logged and skipped (no chunks
 at all for it this cycle) rather than silently emitting a description-less chunk. `ldContext`
-and `resolvedSchemaProperties`, by contrast, only feed the `bblock_schema` chunk and are
-genuinely best-effort: a failure there is logged and that one chunk is dropped, the rest of the
-bblock's chunks are still built. Either way, one bblock's failure is never allowed to abort the
-whole register's reindex, matching the crawler's existing per-register failure isolation (see
-app/crawler/orchestrator.py).
+and `resolvedSchemaProperties`, by contrast, are genuinely best-effort: a failure there is
+logged and that one chunk (or, for `resolvedSchemaProperties`, the semantic-binding pairs too)
+is dropped, the rest of the bblock's chunks are still built. `resolvedSchemaProperties` is now
+fetched whenever `register.json` has it, not only when `ldContext` is absent -- it's the source
+of truth for `bblock_uris` regardless of whether `ldContext` already produced a usable
+`bblock_schema` chunk (see "Why resolvedProperties.json, not the raw JSON-LD @context" in doc
+06 for why the raw `ldContext` values aren't reliable enough for exact URI lookup: a `@context`
+term's value can be an unexpanded CURIE). Either way, one bblock's failure is never allowed to
+abort the whole register's reindex, matching the crawler's existing per-register failure
+isolation (see app/crawler/orchestrator.py).
 
 `description` is kept as its own `bblock_description` chunk rather than folded into
 `bblock_core`: chunk merging in app/search/service.py takes the *best*-scoring chunk per
@@ -108,6 +116,35 @@ def _resolved_properties_text(resolved_properties_json: dict) -> str:
     return "\n".join(dict.fromkeys(names))
 
 
+def _resolved_property_bindings(resolved_properties_json: dict) -> list[tuple[str, str]]:
+    """(path, uri) pairs for every resolved property with a semantic binding, sourced from
+    `effectiveId` (see docs/06-semantic-binding-lookup-plan.md's format reference -- already a
+    fully-expanded absolute URI, not a CURIE, unlike the raw JSON-LD `@context`). `path` for a
+    `defs`-derived entry is relative to whatever property referenced that def, not the document
+    root -- acceptable here since only `uri` drives the bblock_uris lookup this feeds; `path` is
+    carried along purely for eyeballing/debugging, not resolved to be absolute.
+
+    We don't need to walk `ref` pointers or reconstruct absolute paths: every `defs` group only
+    ever exists because at least one `properties` entry (or another `defs` entry) points at it,
+    so the union of every `effectiveId` found anywhere in `properties[]` and in every list under
+    `defs{}.values()` already covers all bindings in the file, with no risk of missing one.
+    """
+
+    def _entries(items: list[dict]) -> list[tuple[str, str]]:
+        pairs = []
+        for item in items:
+            uri = item.get("effectiveId")
+            path = item.get("path")
+            if uri and isinstance(path, list):
+                pairs.append((".".join(str(segment) for segment in path), uri))
+        return pairs
+
+    pairs = _entries(resolved_properties_json.get("properties") or [])
+    for group in (resolved_properties_json.get("defs") or {}).values():
+        pairs.extend(_entries(group))
+    return list(dict.fromkeys(pairs))  # de-dup identical (path, uri) pairs, preserve order
+
+
 def _bblock_usage_text(raw_bblock: dict, json_full_doc: dict) -> str:
     """`sources` (specs/papers this block is based on) and `transforms` (conversions it
     supports, e.g. "convert to CSV") describe how this block relates to and can be used with
@@ -149,15 +186,20 @@ def _bblock_usage_text(raw_bblock: dict, json_full_doc: dict) -> str:
 
 async def build_register_chunks(
     client: httpx.AsyncClient, register_info: RegisterInfo, register_json: dict
-) -> tuple[list[Chunk], dict[str, str], list[str]]:
+) -> tuple[list[Chunk], dict[str, str], list[str], dict[str, list[tuple[str, str]]]]:
     """Returns the chunks to embed, a bblock_id -> description map (sourced from the same
     json-full doc fetched below for the bblock_description chunk, not register.json -- which has
-    no per-bblock description field) for the caller to also feed into the FTS5 keyword index, and
-    the ids of bblocks whose main (json-full) metadata failed to fetch -- the caller uses this to
-    surface the register as having partial results rather than a silent full success."""
+    no per-bblock description field) for the caller to also feed into the FTS5 keyword index, the
+    ids of bblocks whose main (json-full) metadata failed to fetch -- the caller uses this to
+    surface the register as having partial results rather than a silent full success -- and a
+    bblock_id -> (path, uri) list map of semantic bindings for the caller to feed into the
+    bblock_uris reverse index (see docs/06-semantic-binding-lookup-plan.md). A bblock absent from
+    this last map simply has no resolvedSchemaProperties, or none of its properties carry a
+    semantic binding -- not an error case."""
     chunks: list[Chunk] = []
     descriptions: dict[str, str] = {}
     failed_bblock_ids: list[str] = []
+    bindings: dict[str, list[tuple[str, str]]] = {}
 
     summary_text = _register_summary_text(register_json)
     if summary_text:
@@ -243,18 +285,29 @@ async def build_register_chunks(
                 if isinstance(ld_context_json, dict):
                     schema_text = _bblock_schema_text(ld_context_json)
 
-        if not schema_text:
-            resolved_url = raw_bblock.get("resolvedSchemaProperties")
-            if resolved_url:
-                try:
-                    resolved_json = await get_json(client, resolved_url)
-                except Exception as exc:  # noqa: BLE001 - best-effort: skip this chunk, keep the bblock
-                    logger.warning(
-                        "Failed to fetch resolvedSchemaProperties for %s from %s: %s", bblock_id, resolved_url, exc
-                    )
-                else:
-                    if isinstance(resolved_json, dict):
-                        schema_text = _resolved_properties_text(resolved_json)
+        # Fetched whenever present, regardless of whether ldContext already produced schema_text
+        # above -- resolvedSchemaProperties is the source of truth for bblock_uris bindings even
+        # for a bblock that also has a perfectly good ldContext (see module docstring).
+        resolved_json: dict | None = None
+        resolved_url = raw_bblock.get("resolvedSchemaProperties")
+        if resolved_url:
+            try:
+                fetched = await get_json(client, resolved_url)
+            except Exception as exc:  # noqa: BLE001 - best-effort: skip this chunk/bindings, keep the bblock
+                logger.warning(
+                    "Failed to fetch resolvedSchemaProperties for %s from %s: %s", bblock_id, resolved_url, exc
+                )
+            else:
+                if isinstance(fetched, dict):
+                    resolved_json = fetched
+
+        if not schema_text and resolved_json:
+            schema_text = _resolved_properties_text(resolved_json)  # unchanged fallback behavior
+
+        if resolved_json:
+            bblock_bindings = _resolved_property_bindings(resolved_json)
+            if bblock_bindings:
+                bindings[bblock_id] = bblock_bindings
 
         if schema_text:
             chunks.append(
@@ -285,4 +338,4 @@ async def build_register_chunks(
                 )
             )
 
-    return chunks, descriptions, failed_bblock_ids
+    return chunks, descriptions, failed_bblock_ids, bindings

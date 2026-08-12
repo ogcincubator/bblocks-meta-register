@@ -17,6 +17,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from app.config import settings
 from app.db.base import session_scope
+from app.repositories.bblock_uris import MIN_PREFIX_LENGTH, find_bblocks_by_uri
 from app.repositories.bblocks import get_bblock as repo_get_bblock
 from app.repositories.bblocks import get_bblocks_by_ids, list_bblocks
 from app.repositories.deps import (
@@ -69,7 +70,9 @@ mcp = FastMCP(
         "specific candidate before recommending it (get_bblocks fetches several bblocks by id "
         "in one call -- prefer it over looping get_bblock over a shortlist), and "
         "bblock_dependencies/register_dependencies to check what it already pulls in or what "
-        "depends on it."
+        "depends on it. Use find_bblocks_by_semantic_binding instead of search_bblocks when the "
+        "caller already has a specific RDF/vocabulary URI or namespace in hand, rather than a "
+        "natural-language description."
     ),
 )
 
@@ -129,6 +132,56 @@ async def search_bblocks(
                 }
             )
         return results
+
+
+@mcp.tool()
+async def find_bblocks_by_semantic_binding(
+    uri: str,
+    mode: Literal["exact", "prefix", "both"] = "both",
+    limit: int = 20,
+) -> dict:
+    """Find bblocks that bind a schema property to a specific RDF/vocabulary URI, or to any term
+    under a URI namespace prefix -- e.g. "which bblocks use sosa:observedProperty" or "everything
+    under the SOSA namespace". This is a categorical exact/prefix match on a structured URI
+    value, not a relevance-ranked search: prefer it over search_bblocks when the caller already
+    has a specific vocabulary/term URI or namespace in hand; use search_bblocks instead for a
+    natural-language description of what's needed. Each result carries `matched_uri`,
+    `matched_path` (best-effort schema property path -- not guaranteed absolute, see the field
+    itself), and `match_type` ("exact" or "prefix").
+
+    Args:
+        uri: RDF/vocabulary URI (or, under mode="prefix"/"both", a namespace prefix) to look up,
+            e.g. "http://www.w3.org/ns/sosa/observedProperty".
+        mode: "exact" matches only this exact URI; "prefix" matches any URI under this prefix
+            (e.g. the whole "http://www.w3.org/ns/sosa/" namespace); "both" (default) returns
+            both, exact matches first.
+        limit: Max number of results (1-200).
+    """
+    limit = max(1, min(limit, 200))
+    if mode in ("prefix", "both") and len(uri) < MIN_PREFIX_LENGTH:
+        raise ValueError(
+            f"uri must be at least {MIN_PREFIX_LENGTH} characters for mode={mode!r}, to avoid a "
+            f"near-full-table scan (got {len(uri)}). Use mode='exact' for a short exact value."
+        )
+
+    async with session_scope() as session:
+        matches, total = await find_bblocks_by_uri(session, uri, mode=mode, limit=limit, offset=0)
+        bblocks_by_id = await get_bblocks_by_ids(session, [m.bblock_id for m in matches])
+        items = []
+        for match in matches:
+            bblock = bblocks_by_id.get(match.bblock_id)
+            if bblock is None:
+                continue  # bblock_uris momentarily ahead of a concurrent relational delete
+            summary = BblockSummary.model_validate(bblock)
+            items.append(
+                {
+                    **summary.model_dump(exclude={"matched_uri", "matched_path", "match_type"}),
+                    "matched_uri": match.uri,
+                    "matched_path": match.path,
+                    "match_type": match.match_type,
+                }
+            )
+        return {"numberMatched": total, "numberReturned": len(items), "items": items}
 
 
 @mcp.tool()

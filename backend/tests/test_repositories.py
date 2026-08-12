@@ -1,5 +1,7 @@
 import pytest
+from sqlalchemy import text
 
+from app.repositories import bblock_uris as bblock_uris_repo
 from app.repositories import bblocks as bblocks_repo
 from app.repositories import conflicts as conflicts_repo
 from app.repositories import crawl_status as crawl_status_repo
@@ -169,6 +171,187 @@ async def test_bblock_deps_and_register_deps_roundtrip(db_session):
     await db_session.commit()
     assert await deps_repo.outgoing_register_deps(db_session, "ogc/main") == [("acme/other", "dependsOn")]
     assert await deps_repo.incoming_register_deps(db_session, "acme/other") == [("ogc/main", "dependsOn")]
+
+
+async def _seed_bblock(session, bblock_id, register_id="ogc/main"):
+    await bblocks_repo.upsert_bblock(
+        session,
+        bblock_id=bblock_id,
+        register_id=register_id,
+        name=bblock_id,
+        abstract=None,
+        status=None,
+        item_class=None,
+        version=None,
+        tags=[],
+        date_time_addition=None,
+        date_of_last_change=None,
+        has_schema=False,
+        has_ld_context=False,
+        has_shacl_shapes=False,
+        schema_urls={},
+        ld_context_url=None,
+        shacl_shapes_urls=[],
+        sources=[],
+    )
+
+
+async def test_bblock_uris_replace_roundtrip(db_session):
+    await _seed_org_and_register(db_session)
+    await _seed_bblock(db_session, "ogc.main.a")
+    await db_session.commit()
+
+    await bblock_uris_repo.replace_bblock_uris(db_session, "ogc.main.a", [("lat", "http://example.org/ns/lat")])
+    await db_session.commit()
+    matches, total = await bblock_uris_repo.find_bblocks_by_uri(db_session, "http://example.org/ns/lat")
+    assert total == 1
+    assert matches[0].path == "lat"
+    assert matches[0].match_type == "exact"
+
+    # A second call replaces the bblock's rows rather than appending to them.
+    await bblock_uris_repo.replace_bblock_uris(db_session, "ogc.main.a", [("long", "http://example.org/ns/long")])
+    await db_session.commit()
+    _, total = await bblock_uris_repo.find_bblocks_by_uri(db_session, "http://example.org/ns/lat")
+    assert total == 0
+    matches, total = await bblock_uris_repo.find_bblocks_by_uri(db_session, "http://example.org/ns/long")
+    assert total == 1
+    assert matches[0].bblock_id == "ogc.main.a"
+
+
+async def test_find_bblocks_by_uri_modes(db_session):
+    await _seed_org_and_register(db_session)
+    await _seed_bblock(db_session, "ogc.main.a")
+    await _seed_bblock(db_session, "ogc.main.b")
+    await db_session.commit()
+
+    # b's URI is a strict extension of a's -- exercises the "exact sorts before prefix" ordering
+    # invariant and the "exact" match_type still applying under mode="prefix" for a itself.
+    await bblock_uris_repo.replace_bblock_uris(db_session, "ogc.main.a", [("prop", "http://example.org/ns/term")])
+    await bblock_uris_repo.replace_bblock_uris(
+        db_session, "ogc.main.b", [("prop", "http://example.org/ns/term/nested")]
+    )
+    await db_session.commit()
+
+    exact, exact_total = await bblock_uris_repo.find_bblocks_by_uri(
+        db_session, "http://example.org/ns/term", mode="exact"
+    )
+    assert exact_total == 1
+    assert [(m.bblock_id, m.match_type) for m in exact] == [("ogc.main.a", "exact")]
+
+    prefix, prefix_total = await bblock_uris_repo.find_bblocks_by_uri(
+        db_session, "http://example.org/ns/term", mode="prefix"
+    )
+    assert prefix_total == 2
+    assert {(m.bblock_id, m.match_type) for m in prefix} == {
+        ("ogc.main.a", "exact"),
+        ("ogc.main.b", "prefix"),
+    }
+
+    both, both_total = await bblock_uris_repo.find_bblocks_by_uri(
+        db_session, "http://example.org/ns/term", mode="both"
+    )
+    assert both_total == 2
+    # ORDER BY uri, bblock_id puts the shorter exact-matching uri ahead of its own extension.
+    assert [m.bblock_id for m in both] == ["ogc.main.a", "ogc.main.b"]
+
+    no_match, no_match_total = await bblock_uris_repo.find_bblocks_by_uri(
+        db_session, "http://example.org/ns/unrelated", mode="both"
+    )
+    assert no_match_total == 0
+    assert no_match == []
+
+
+async def test_find_bblocks_by_uri_prefix_is_boundary_anchored(db_session):
+    """Regression test for the false-positive a plain string-prefix match would have: a uri
+    that merely starts with the same characters as the query, but isn't nested under it at a
+    '/' or '#' boundary, must not be returned. See _prefix_conditions()'s docstring."""
+    await _seed_org_and_register(db_session)
+    await _seed_bblock(db_session, "ogc.main.nested")
+    await _seed_bblock(db_session, "ogc.main.sibling")
+    await db_session.commit()
+
+    # Genuinely nested under the "http://example.org/ns/term" namespace...
+    await bblock_uris_repo.replace_bblock_uris(
+        db_session, "ogc.main.nested", [("prop", "http://example.org/ns/term/child")]
+    )
+    # ...vs. merely sharing the same leading characters, with no separator in between -- a
+    # different term entirely, not a member of the "term" namespace.
+    await bblock_uris_repo.replace_bblock_uris(
+        db_session, "ogc.main.sibling", [("prop", "http://example.org/ns/termOther")]
+    )
+    await db_session.commit()
+
+    matches, total = await bblock_uris_repo.find_bblocks_by_uri(
+        db_session, "http://example.org/ns/term", mode="prefix"
+    )
+    assert total == 1
+    assert [m.bblock_id for m in matches] == ["ogc.main.nested"]
+
+    # A query with (or without) a trailing separator must behave identically -- both should
+    # still exclude the sibling and include the genuinely-nested child.
+    matches, total = await bblock_uris_repo.find_bblocks_by_uri(
+        db_session, "http://example.org/ns/term/", mode="prefix"
+    )
+    assert total == 1
+    assert [m.bblock_id for m in matches] == ["ogc.main.nested"]
+
+
+async def test_bblock_uris_cascade_deleted_with_register(db_session):
+    await _seed_org_and_register(db_session)
+    await _seed_bblock(db_session, "ogc.main.a")
+    await db_session.commit()
+    await bblock_uris_repo.replace_bblock_uris(db_session, "ogc.main.a", [("prop", "http://example.org/ns/term")])
+    await db_session.commit()
+
+    _, total = await bblock_uris_repo.find_bblocks_by_uri(db_session, "http://example.org/ns/term")
+    assert total == 1
+
+    await bblocks_repo.delete_bblocks_for_register(db_session, "ogc/main")
+    await db_session.commit()
+
+    _, total = await bblock_uris_repo.find_bblocks_by_uri(db_session, "http://example.org/ns/term")
+    assert total == 0
+
+
+async def test_find_bblocks_by_uri_prefix_query_uses_index(db_session):
+    """Confirms find_bblocks_by_uri's prefix query actually uses the `uri` index with EXPLAIN
+    QUERY PLAN rather than trusting a general claim blindly -- see
+    docs/06-semantic-binding-lookup-plan.md's "Prefix-match query strategy".
+
+    Two things were checked this way and both failed the first, more "obvious" approach:
+    1. A plain `LIKE 'prefix%'` scan only used the index once `PRAGMA case_sensitive_like=ON`
+       was set, which app/db/base.py doesn't set -- replaced with a `>=`/`<` range scan instead,
+       which needs no such pragma.
+    2. That range scan alone still matched a false positive like "http://x/abc" for prefix
+       "http://x/a" (see test_find_bblocks_by_uri_prefix_is_boundary_anchored) -- fixed by
+       anchoring the range to a '/' or '#' boundary (_prefix_conditions()), which ORs together
+       three conditions on the same `uri` column. This test confirms that OR still resolves to
+       index searches (SQLite's "MULTI-INDEX OR" plan) rather than falling back to a scan.
+    """
+    await _seed_org_and_register(db_session)
+    await _seed_bblock(db_session, "ogc.main.a")
+    await db_session.commit()
+    await bblock_uris_repo.replace_bblock_uris(db_session, "ogc.main.a", [("prop", "http://example.org/ns/term")])
+    await db_session.commit()
+
+    plan = await db_session.execute(
+        text(
+            "EXPLAIN QUERY PLAN SELECT * FROM bblock_uris "
+            "WHERE uri = :self "
+            "   OR (uri >= :slash_lo AND uri < :slash_hi) "
+            "   OR (uri >= :hash_lo AND uri < :hash_hi)"
+        ),
+        {
+            "self": "http://example.org/ns/term",
+            "slash_lo": "http://example.org/ns/term/",
+            "slash_hi": "http://example.org/ns/term0",
+            "hash_lo": "http://example.org/ns/term#",
+            "hash_hi": "http://example.org/ns/term$",
+        },
+    )
+    plan_text = " ".join(str(row) for row in plan.fetchall())
+    assert "ix_bblock_uris_uri" in plan_text
+    assert "MULTI-INDEX OR" in plan_text
 
 
 async def test_identifier_conflicts_record_and_list(db_session):

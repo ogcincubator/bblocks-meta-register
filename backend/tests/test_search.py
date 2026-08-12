@@ -297,7 +297,7 @@ async def test_build_register_chunks_fetches_ld_context_and_examples():
     }
 
     async with httpx.AsyncClient() as client:
-        chunks, descriptions, failed_ids = await build_register_chunks(client, REGISTER_INFO, register_json)
+        chunks, descriptions, failed_ids, bindings = await build_register_chunks(client, REGISTER_INFO, register_json)
 
     by_type = {c.chunk_type: c for c in chunks}
     assert set(by_type) == {
@@ -314,6 +314,9 @@ async def test_build_register_chunks_fetches_ld_context_and_examples():
     assert "Full markdown description of A" not in by_type["bblock_core"].text
     assert "GeoJSON (RFC 7946)" not in by_type["bblock_core"].text
     assert descriptions == {"ogc.main.a": "Full markdown description of A"}
+    # No resolvedSchemaProperties on this bblock -- ldContext alone doesn't feed bblock_uris
+    # (see "Why resolvedProperties.json, not the raw JSON-LD @context" in docs/06).
+    assert bindings == {}
 
 
 @respx.mock
@@ -335,11 +338,14 @@ async def test_build_register_chunks_falls_back_to_resolved_properties_without_l
     }
 
     async with httpx.AsyncClient() as client:
-        chunks, descriptions, failed_ids = await build_register_chunks(client, REGISTER_INFO, register_json)
+        chunks, descriptions, failed_ids, bindings = await build_register_chunks(client, REGISTER_INFO, register_json)
 
     schema_chunk = next(c for c in chunks if c.chunk_type == "bblock_schema")
     assert schema_chunk.text == "a\na.b"
     assert descriptions == {}
+    # Fixture properties carry no effectiveId, so no semantic bindings -- see
+    # test_resolved_property_bindings_* in test_chunking.py for the extraction logic itself.
+    assert bindings == {}
 
 
 @respx.mock
@@ -352,11 +358,12 @@ async def test_build_register_chunks_skips_failed_fetch_without_raising():
     }
 
     async with httpx.AsyncClient() as client:
-        chunks, descriptions, failed_ids = await build_register_chunks(client, REGISTER_INFO, register_json)
+        chunks, descriptions, failed_ids, bindings = await build_register_chunks(client, REGISTER_INFO, register_json)
 
     assert [c.chunk_type for c in chunks] == ["bblock_core"]
     assert descriptions == {}
     assert failed_ids == []
+    assert bindings == {}
 
 
 @respx.mock
@@ -373,8 +380,9 @@ async def test_build_register_chunks_skips_whole_bblock_when_main_metadata_fetch
     }
 
     async with httpx.AsyncClient() as client:
-        chunks, descriptions, failed_ids = await build_register_chunks(client, REGISTER_INFO, register_json)
+        chunks, descriptions, failed_ids, bindings = await build_register_chunks(client, REGISTER_INFO, register_json)
 
     assert chunks == []
     assert descriptions == {}
     assert failed_ids == ["ogc.main.a"]
+    assert bindings == {}

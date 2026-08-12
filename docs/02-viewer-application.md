@@ -202,6 +202,9 @@ oriented toward reasoning and traversal tasks that are awkward over plain REST:
 
 - **Use-case search** — given a natural-language problem statement or use case description, find the
   most suitable set of bblocks (uses the semantic/hybrid search index under the hood).
+- **Semantic binding lookup** — given a known RDF/vocabulary URI (or a namespace prefix), find bblocks that bind a
+  schema property to it — a categorical exact/prefix match, distinct from use-case search's fuzzy relevance
+  ranking (see [06-semantic-binding-lookup-plan.md](06-semantic-binding-lookup-plan.md)).
 - **Dependency traversal** — given a bblock or register identifier, walk the dependency graph in either
   direction (what does X depend on? what depends on X?) to a specified depth.
 - **Register inspection** — browse orgs, registers, and bblock listings as structured tool calls,

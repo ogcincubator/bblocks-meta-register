@@ -110,6 +110,54 @@ async def test_bblocks_endpoints(db_session, api_client):
     assert response.status_code == 404
 
 
+async def test_bblocks_by_uri_endpoint(db_session, api_client):
+    await _seed(db_session)
+    from app.repositories.bblock_uris import replace_bblock_uris
+
+    await replace_bblock_uris(
+        db_session, "ogc.main.a", [("prop", "http://www.w3.org/ns/sosa/observedProperty")]
+    )
+    await db_session.commit()
+
+    # Exact match (default mode="both").
+    response = await api_client.get(
+        "/bblocks/by-uri", params={"uri": "http://www.w3.org/ns/sosa/observedProperty"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["numberMatched"] == 1
+    assert body["items"][0]["id"] == "ogc.main.a"
+    assert body["items"][0]["matched_uri"] == "http://www.w3.org/ns/sosa/observedProperty"
+    assert body["items"][0]["match_type"] == "exact"
+
+    # Prefix match against the containing namespace.
+    response = await api_client.get(
+        "/bblocks/by-uri", params={"uri": "http://www.w3.org/ns/sosa/", "mode": "prefix"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["numberMatched"] == 1
+    assert body["items"][0]["match_type"] == "prefix"
+
+    # mode="exact" doesn't match a namespace prefix that isn't itself a stored uri.
+    response = await api_client.get(
+        "/bblocks/by-uri", params={"uri": "http://www.w3.org/ns/sosa/", "mode": "exact"}
+    )
+    assert response.status_code == 200
+    assert response.json()["numberMatched"] == 0
+
+    # Empty result for an unrelated uri.
+    response = await api_client.get("/bblocks/by-uri", params={"uri": "http://example.org/nothing-here"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["numberMatched"] == 0
+    assert body["items"] == []
+
+    # Min-prefix-length guard, mode="prefix"/"both" only.
+    response = await api_client.get("/bblocks/by-uri", params={"uri": "short", "mode": "prefix"})
+    assert response.status_code == 422
+
+
 async def test_bblock_graph_endpoint(db_session, api_client):
     await _seed(db_session)
     register_info = RegisterInfo(register_id="ogc/main", org_id="ogc", name="main", register_url="https://example.org/register.json")

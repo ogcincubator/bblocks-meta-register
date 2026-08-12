@@ -3,6 +3,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 
 from app.api.deps import EmbeddingProviderDep, SessionDep
+from app.repositories.bblock_uris import MIN_PREFIX_LENGTH, find_bblocks_by_uri
 from app.repositories.bblocks import get_bblock, get_bblocks_by_ids, list_bblocks
 from app.repositories.deps import incoming_bblock_deps, outgoing_bblock_deps
 from app.repositories.registers import get_register_url
@@ -103,6 +104,50 @@ async def _search_bblocks(
             continue  # search index momentarily ahead of a concurrent relational delete
         summary = BblockSummary.model_validate(bblock)
         summaries.append(summary.model_copy(update={"matched_chunk_types": hit.matched_chunk_types}))
+
+    return BblockListResponse(numberMatched=total, numberReturned=len(summaries), items=summaries)
+
+
+@router.get("/by-uri", response_model=BblockListResponse)
+async def find_bblocks_by_uri_endpoint(
+    session: SessionDep,
+    uri: str = Query(
+        ...,
+        min_length=1,
+        description="RDF/vocabulary URI (or, under mode='prefix'/'both', a namespace prefix) to look up, "
+        "e.g. 'http://www.w3.org/ns/sosa/observedProperty'.",
+    ),
+    mode: Literal["exact", "prefix", "both"] = Query(
+        default="both",
+        description="'exact' matches only this exact URI; 'prefix' matches any URI under this prefix "
+        "(e.g. the whole 'http://www.w3.org/ns/sosa/' namespace); 'both' returns both, exact matches first.",
+    ),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> BblockListResponse:
+    # NB: this route is registered ahead of GET /{identifier} on purpose -- otherwise FastAPI's
+    # in-order route matching would swallow "/bblocks/by-uri" as identifier="by-uri" instead.
+    if mode in ("prefix", "both") and len(uri) < MIN_PREFIX_LENGTH:
+        raise HTTPException(
+            status_code=422,
+            detail=f"uri must be at least {MIN_PREFIX_LENGTH} characters for mode={mode!r}, to avoid a "
+            f"near-full-table scan (got {len(uri)}). Use mode='exact' for a short exact value.",
+        )
+
+    matches, total = await find_bblocks_by_uri(session, uri, mode=mode, limit=limit, offset=offset)
+
+    bblocks_by_id = await get_bblocks_by_ids(session, [m.bblock_id for m in matches])
+    summaries = []
+    for match in matches:
+        bblock = bblocks_by_id.get(match.bblock_id)
+        if bblock is None:
+            continue  # bblock_uris momentarily ahead of a concurrent relational delete
+        summary = BblockSummary.model_validate(bblock)
+        summaries.append(
+            summary.model_copy(
+                update={"matched_uri": match.uri, "matched_path": match.path, "match_type": match.match_type}
+            )
+        )
 
     return BblockListResponse(numberMatched=total, numberReturned=len(summaries), items=summaries)
 

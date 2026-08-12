@@ -37,6 +37,24 @@ register_deps = Table(
     Column("kind", String, primary_key=True),
 )
 
+bblock_uris = Table(
+    "bblock_uris",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    # FK (unlike bblock_deps.target_id): a semantic binding's URI is external vocabulary, not a
+    # reference to another bblock, so there's no "dangling target" case to accommodate here --
+    # bblock_id always points at a bblock this same crawl cycle just indexed. CASCADE means
+    # delete_bblocks_for_register()'s full-replace wipes these for free, same reasoning as
+    # bblock_deps.source_id.
+    Column("bblock_id", ForeignKey("bblocks.id", ondelete="CASCADE"), nullable=False, index=True),
+    Column("uri", String, nullable=False, index=True),
+    # Best-effort, dot-joined property path (e.g. "location.lat") to the property this URI was
+    # bound to -- see docs/06-semantic-binding-lookup-plan.md's "ref/defs deduplication" note:
+    # relative to the referencing property for defs-derived entries, not always absolute from
+    # the doc root. Carried along purely for eyeballing/debugging, not queried on.
+    Column("path", String, nullable=True),
+)
+
 identifier_conflicts = Table(
     "identifier_conflicts",
     metadata,

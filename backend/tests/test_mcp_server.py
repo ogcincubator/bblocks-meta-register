@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 import app.mcp.server as mcp_server
+from app.repositories.bblock_uris import replace_bblock_uris
 from app.repositories.bblocks import upsert_bblock
 from app.repositories.deps import replace_bblock_deps
 from tests.test_api_endpoints import _seed
@@ -34,6 +35,33 @@ async def test_search_bblocks_tool(db_session, mcp_tools):
     results = await mcp_tools.search_bblocks("bounding box")
     assert [r["id"] for r in results] == ["ogc.main.a"]
     assert "score" in results[0]
+
+
+async def test_find_bblocks_by_semantic_binding_tool(db_session, mcp_tools):
+    await _seed(db_session)
+    await replace_bblock_uris(
+        db_session, "ogc.main.a", [("prop", "http://www.w3.org/ns/sosa/observedProperty")]
+    )
+    await db_session.commit()
+
+    body = await mcp_tools.find_bblocks_by_semantic_binding("http://www.w3.org/ns/sosa/observedProperty")
+    assert body["numberMatched"] == 1
+    assert body["items"][0]["id"] == "ogc.main.a"
+    assert body["items"][0]["matched_uri"] == "http://www.w3.org/ns/sosa/observedProperty"
+    assert body["items"][0]["match_type"] == "exact"
+
+    body = await mcp_tools.find_bblocks_by_semantic_binding(
+        "http://www.w3.org/ns/sosa/", mode="prefix"
+    )
+    assert body["numberMatched"] == 1
+    assert body["items"][0]["match_type"] == "prefix"
+
+    body = await mcp_tools.find_bblocks_by_semantic_binding("http://example.org/nothing-here")
+    assert body["numberMatched"] == 0
+    assert body["items"] == []
+
+    with pytest.raises(ValueError, match="at least"):
+        await mcp_tools.find_bblocks_by_semantic_binding("short", mode="prefix")
 
 
 async def test_get_bblock_tool(db_session, mcp_tools):
