@@ -1,4 +1,4 @@
-INDEXER_VERSION = 3
+INDEXER_VERSION = 4
 """Bump this whenever a change to app/crawler/indexer.py's extraction/transform logic (e.g.
 _extract_presence, _extract_edges) would produce different stored data for a register whose
 register.json `modified` timestamp hasn't changed -- otherwise needs_reindex() only compares
@@ -9,7 +9,13 @@ logic in place until upstream content happens to change. See CLAUDE.md for the b
 resolvedSchemaProperties -- see docs/06-semantic-binding-lookup-plan.md. This lives in the
 search-content half of the pipeline, not indexer.py's relational extraction, but needs_reindex()
 gates the whole per-register pipeline (see orchestrator.py's _crawl_one_register), so the bump
-rule still applies."""
+rule still applies.
+
+4: bblock_uris rows now also come from each example's Turtle snippet (source="example",
+alongside the existing source="schema" rows) -- see chunking.py's _example_bindings(). Every
+already-crawled register's stored bblock_uris.source defaults to "schema" via the 0006 migration
+regardless of whether that row was actually schema- or example-derived, so a full reindex is
+needed to backfill it correctly, not just to pick up the new example-derived rows themselves."""
 
 
 def needs_reindex(stored_modified: str | None, fetched_modified: str | None, stored_indexer_version: int | None) -> bool:

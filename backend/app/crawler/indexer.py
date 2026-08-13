@@ -180,7 +180,8 @@ async def build_search_content(
     list[str] is the ids of bblocks whose main metadata failed to fetch (see
     build_register_chunks) -- the caller uses it, alongside index_register()'s own failed_ids,
     to mark the register as errored even though this call itself doesn't raise. The trailing
-    dict is the bblock_id -> (path, uri) semantic-binding map, see build_register_chunks."""
+    dict is the bblock_id -> (path, uri, source) semantic-binding map, see
+    build_register_chunks."""
     indexed_ids_set = set(indexed_ids)
     accepted_bblocks = [b for b in register_json.get("bblocks", []) if b.get("itemIdentifier") in indexed_ids_set]
     filtered_register_json = {**register_json, "bblocks": accepted_bblocks}
@@ -203,7 +204,7 @@ async def write_search_content(
     embeddings: list[list[float]],
     accepted_bblocks: list[dict],
     descriptions: dict[str, str],
-    bindings: dict[str, list[tuple[str, str]]],
+    bindings: dict[str, list[tuple[str, str, str]]],
 ) -> None:
     """Full-replace of this register's FTS5 keyword rows, vector chunks, and bblock_uris rows
     (docs/03's "when a register's content hash changes, that register's data is fully replaced"

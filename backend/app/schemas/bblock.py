@@ -25,11 +25,13 @@ class BblockSummary(BaseModel):
     has_shacl_shapes: bool
     matched_chunk_types: list[str] | None = None
     # Populated only by GET /bblocks/by-uri -- which semantic binding (RDF/vocabulary URI) this
-    # bblock matched on, its best-effort schema path, and whether the match was exact or a
-    # prefix/namespace match. See docs/06-semantic-binding-lookup-plan.md.
+    # bblock matched on, its best-effort schema path, whether the match was exact or a
+    # prefix/namespace match, and whether the binding was declared ("schema") or merely used in
+    # an example ("example"). See docs/06-semantic-binding-lookup-plan.md.
     matched_uri: str | None = None
     matched_path: str | None = None
     match_type: Literal["exact", "prefix"] | None = None
+    matched_source: Literal["schema", "example"] | None = None
 
 
 class BblockDetail(BblockSummary):

@@ -387,3 +387,52 @@ Following existing test module conventions:
   `EXPLAIN QUERY PLAN` instead of trusting a claim — see "Prefix-match query strategy" above for the full story
   (short version: `LIKE 'prefix%'` doesn't use the index without a pragma this codebase doesn't set, and a naive
   `>=`/`<` range scan has a false-positive bug that boundary-anchoring fixes).
+
+## Example-derived bindings (built, addendum)
+
+**Status: built** (migration `0006`, `INDEXER_VERSION` 3 → 4). `bblock_uris` originally had exactly one source:
+`resolvedSchemaProperties`'s `effectiveId`s, i.e. bindings the bblock's author *declared* on a schema property.
+This addendum adds a second, lower-confidence source: RDF/vocabulary terms a bblock's own **examples** happen to
+*use*, scraped from each example's Turtle (`.ttl`) snippet.
+
+**Why Turtle, and why it's cheaper than it looks**: a `.ttl` example snippet is already inlined as `code` text
+inside the same `documentation['json-full']` document `chunking.py` fetches for every bblock (`examples[].snippets[]`
+with `language: "ttl"`/`"turtle"`) — no second network fetch needed, unlike a naive reading of "scrape RDF examples"
+might suggest. Turtle also sidesteps the exact problem that ruled out the raw JSON-LD `@context` as a source for
+declared bindings (see "Why resolvedProperties.json, not the raw JSON-LD @context" above): a `.ttl` snippet's
+`@prefix` declarations are self-contained, mandatory syntax, so `rdflib` yields fully-expanded predicate/type URIs
+directly, no CURIE-expansion step of our own needed.
+
+**Extraction** (`app/search/chunking.py`'s `_turtle_predicate_uris()`/`_example_bindings()`): for each example, parse
+its `ttl`/`turtle` snippet (if any) with `rdflib.Graph().parse(data=code, format="turtle")`, then collect every
+triple's **predicate** URI plus, separately, the **object** of any `rdf:type` triple (a class IRI — a vocabulary
+term too, just not a predicate; e.g. `ex:obs1 a sosa:Observation` should surface `sosa:Observation` alongside
+`sosa:observedProperty`). A malformed snippet is logged and skipped, not fatal to the rest of the bblock — matches
+this module's existing best-effort handling of `ldContext`/`resolvedSchemaProperties` fetch failures.
+
+**Noise filtering**: predicates/type-objects under a placeholder namespace (`example.org`/`.com`/`.net`/`.edu`,
+matching the RFC 2606 reserved domains and the ubiquitous `http://example.org/...` convention bblock examples
+routinely use for illustrative subject/object IRIs) are dropped — a caller querying `bblock_uris` for a genuine
+vocabulary term would never search for `example.org`, so keeping these would only add lookup noise, not recall. A
+predicate position in Turtle is always a full IRI, never a blank node or literal, so no separate blank-node filter
+is needed for predicates; `rdf:type`'s object is filtered the same placeholder-aware way since it's semantically a
+class IRI, not arbitrary triple data, but is otherwise not filtered by node type (only checked to be a `URIRef` at
+all, since an `rdf:type` object could in principle be a blank node in Turtle, which isn't a vocabulary term).
+
+**Provenance and ranking**: an example-derived row's `path` is `"example:<title>"` (or `"example:<index>"` for an
+untitled example) rather than a schema property path — a Turtle triple has no notion of "the JSON Schema property
+this came from". More importantly, "the bblock's sample data happens to use this term" is weaker evidence than "the
+bblock's author declared this binding", so `bblock_uris` gained a `source` column (`"schema"` | `"example"`,
+migration `0006`, `server_default="schema"` so pre-existing rows backfill correctly once `INDEXER_VERSION`'s bump
+forces a full reindex) used as a ranking tiebreaker in `find_bblocks_by_uri`: results are ordered
+`(uri = :uri) DESC, (source = 'schema') DESC, uri, bblock_id` — exact-before-prefix first (kept as an explicit
+`CASE` now that a second key exists, rather than relying on the lexicographic-ordering side effect the single-key
+version exploited — see `find_bblocks_by_uri`'s docstring), then declared-before-example-only among ties. A caller
+asking "which bblocks bind this URI" sees the ones that actually declare the binding before the ones that merely
+demonstrate the term in a sample. `matched_source` is exposed alongside `matched_uri`/`matched_path`/`match_type`
+on both `GET /bblocks/by-uri` and `find_bblocks_by_semantic_binding`.
+
+**Rejected alternative**: a regex-based `@prefix`/triple scraper, to avoid adding `rdflib` as a dependency. Turtle's
+grammar (multi-line literals, nested blank-node syntax, `a` as a keyword synonym for `rdf:type`, base-relative
+IRIs, ...) has enough edge cases that a real parser earns its keep here; `rdflib` was added to
+`pyproject.toml` instead.

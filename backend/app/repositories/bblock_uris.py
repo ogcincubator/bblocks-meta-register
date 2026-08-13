@@ -10,7 +10,7 @@ is plain insert/query over a Core table, no relationship() traversal needed.
 from dataclasses import dataclass
 from typing import Literal
 
-from sqlalchemy import and_, delete, func, insert, or_, select
+from sqlalchemy import and_, case, delete, func, insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.tables import bblock_uris
@@ -28,21 +28,26 @@ class UriMatch:
     # Dot-joined property path (e.g. "location.lat"), already flattened by
     # chunking._resolved_property_bindings() -- not re-split back into segments here, since
     # that would be a lossy round-trip for any segment that itself contains a literal ".".
+    # "example:<title>" for a source="example" row instead (see chunking._example_bindings()).
     path: str | None
     match_type: Literal["exact", "prefix"]
+    # "schema" (declared via resolvedSchemaProperties) or "example" (scraped from a Turtle
+    # example snippet) -- see chunking.py's module docstring. Used as a ranking tiebreaker in
+    # find_bblocks_by_uri: a declared binding outranks an incidental one at the same match_type.
+    source: Literal["schema", "example"]
 
 
-async def replace_bblock_uris(session: AsyncSession, bblock_id: str, bindings: list[tuple[str, str]]) -> None:
-    """(path, uri) pairs -- path already dot-joined by the caller (see UriMatch.path). Mirrors
-    replace_bblock_deps()'s delete-then-insert shape, including the flush-first requirement: a
-    bblock upserted just before this call in the same session wouldn't otherwise be visible yet
-    to the FK check on bblock_uris.bblock_id (see replace_bblock_deps)."""
+async def replace_bblock_uris(session: AsyncSession, bblock_id: str, bindings: list[tuple[str, str, str]]) -> None:
+    """(path, uri, source) triples -- path already dot-joined by the caller (see UriMatch.path).
+    Mirrors replace_bblock_deps()'s delete-then-insert shape, including the flush-first
+    requirement: a bblock upserted just before this call in the same session wouldn't otherwise
+    be visible yet to the FK check on bblock_uris.bblock_id (see replace_bblock_deps)."""
     await session.flush()
     await session.execute(delete(bblock_uris).where(bblock_uris.c.bblock_id == bblock_id))
     if bindings:
         await session.execute(
             insert(bblock_uris),
-            [{"bblock_id": bblock_id, "path": path, "uri": uri} for path, uri in bindings],
+            [{"bblock_id": bblock_id, "path": path, "uri": uri, "source": source} for path, uri, source in bindings],
         )
 
 
@@ -120,19 +125,27 @@ async def find_bblocks_by_uri(
     the API layer can populate BblockListResponse's numberMatched/numberReturned distinction
     the same way it does for every other bblock-listing endpoint.
 
-    Ordering: plain `ORDER BY uri, bblock_id` -- no special-cased "exact first" expression
-    needed, because of an invariant of the WHERE clause below: every row that matches only the
-    boundary-anchored prefix condition necessarily has `uri` as a strict, longer extension of the
-    (normalized) input `uri` string -- it starts with `uri` (or `uri` with its trailing `/`/`#`
-    stripped) plus a `/` or `#` plus more -- and a string is always lexicographically *greater
-    than* any of its own strict prefixes under BINARY collation (e.g. "http://ex/ns/" <
-    "http://ex/ns/x"). So every exact match (`uri == :uri`) already sorts ahead of every
-    prefix-only match for free -- see docs/06-semantic-binding-lookup-plan.md's "Result ordering"
-    for the motivation (deterministic pagination, and exact hits not getting pushed past `limit`
-    by a popular namespace's prefix hits). This also lets the query reuse the same `uri` index for
-    the ORDER BY as for the WHERE's prefix search, instead of forcing a separate sort step.
-    `match_type` is always based on actual uri == :uri equality, regardless of which `mode` was
-    requested -- e.g. a mode="prefix" query still labels a row equal to the input value "exact".
+    Ordering: `ORDER BY (uri = :uri) DESC, (source = 'schema') DESC, uri, bblock_id` -- two
+    explicit ranking keys ahead of the plain lexical tiebreak:
+
+    1. Exact before prefix. Every row that matches only the boundary-anchored prefix condition
+       necessarily has `uri` as a strict, longer extension of the (normalized) input `uri`
+       string, so this key doesn't strictly need to be spelled out (lexical `uri` order alone
+       would already put every exact match first "for free" -- see git history for the
+       single-key version this replaced). It's kept explicit now that a second key exists,
+       since relying on that lexicographic side effect once source-based ordering is also in
+       play would be too easy to break by accident.
+    2. A declared binding (`source = "schema"`) outranks an incidental one (`source = "example"`,
+       scraped from a Turtle example snippet -- see chunking.py's `_example_bindings()`) among
+       rows tied on the first key. A caller asking for the top N bblocks bound to a URI should
+       see the ones that actually declare the binding before the ones that merely use the term
+       in sample data.
+
+    See docs/06-semantic-binding-lookup-plan.md's "Result ordering" / "Example-derived bindings"
+    for the motivation (deterministic pagination; exact/declared hits not getting pushed past
+    `limit` by a popular namespace's prefix or example hits). `match_type` is always based on
+    actual uri == :uri equality, regardless of which `mode` was requested -- e.g. a mode="prefix"
+    query still labels a row equal to the input value "exact".
     """
     where_clause = _match_conditions(uri, mode)
 
@@ -140,10 +153,16 @@ async def find_bblocks_by_uri(
         await session.execute(select(func.count()).select_from(bblock_uris).where(where_clause))
     ).scalar_one()
 
+    order_by = (
+        case((bblock_uris.c.uri == uri, 1), else_=0).desc(),
+        case((bblock_uris.c.source == "schema", 1), else_=0).desc(),
+        bblock_uris.c.uri,
+        bblock_uris.c.bblock_id,
+    )
     stmt = (
-        select(bblock_uris.c.bblock_id, bblock_uris.c.uri, bblock_uris.c.path)
+        select(bblock_uris.c.bblock_id, bblock_uris.c.uri, bblock_uris.c.path, bblock_uris.c.source)
         .where(where_clause)
-        .order_by(bblock_uris.c.uri, bblock_uris.c.bblock_id)
+        .order_by(*order_by)
         .limit(limit)
         .offset(offset)
     )
@@ -154,6 +173,7 @@ async def find_bblocks_by_uri(
             uri=row.uri,
             path=row.path,
             match_type="exact" if row.uri == uri else "prefix",
+            source=row.source,
         )
         for row in result
     ]

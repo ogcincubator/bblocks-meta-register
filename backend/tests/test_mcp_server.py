@@ -40,7 +40,7 @@ async def test_search_bblocks_tool(db_session, mcp_tools):
 async def test_find_bblocks_by_semantic_binding_tool(db_session, mcp_tools):
     await _seed(db_session)
     await replace_bblock_uris(
-        db_session, "ogc.main.a", [("prop", "http://www.w3.org/ns/sosa/observedProperty")]
+        db_session, "ogc.main.a", [("prop", "http://www.w3.org/ns/sosa/observedProperty", "schema")]
     )
     await db_session.commit()
 
@@ -49,6 +49,7 @@ async def test_find_bblocks_by_semantic_binding_tool(db_session, mcp_tools):
     assert body["items"][0]["id"] == "ogc.main.a"
     assert body["items"][0]["matched_uri"] == "http://www.w3.org/ns/sosa/observedProperty"
     assert body["items"][0]["match_type"] == "exact"
+    assert body["items"][0]["matched_source"] == "schema"
 
     body = await mcp_tools.find_bblocks_by_semantic_binding(
         "http://www.w3.org/ns/sosa/", mode="prefix"

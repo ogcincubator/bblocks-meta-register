@@ -1,8 +1,11 @@
 """Builds the per-register/per-bblock text chunks docs/03-indexing-and-search.md's "Chunking
 strategy" describes, ready to hand to an EmbeddingProvider and then a VectorStore. Also builds
-the (path, uri) semantic-binding pairs that feed the `bblock_uris` reverse index (see
-docs/06-semantic-binding-lookup-plan.md) -- a query-time lookup, not a search chunk, but sourced
-from the same `resolvedSchemaProperties` fetch this module already does for `bblock_schema`.
+the (path, uri, source) semantic-binding triples that feed the `bblock_uris` reverse index (see
+docs/06-semantic-binding-lookup-plan.md) -- a query-time lookup, not a search chunk. Two sources
+feed it: `resolvedSchemaProperties` (source="schema" -- a binding the bblock's author declared)
+and each example's Turtle snippet, if any (source="example" -- a term the bblock's sample data
+merely *uses*; see "Example-derived bindings" in doc 06). `source` lets a caller rank a declared
+binding ahead of an incidental one at the same match_type.
 
 `bblock_schema`, `bblock_description` and `bblock_usage` need content that isn't in
 register.json itself: the JSON-LD context (`ldContext` URL, field name -> semantic URI
@@ -33,6 +36,8 @@ description closely isn't held back by unrelated metadata sharing the same chunk
 import logging
 
 import httpx
+from rdflib import Graph, URIRef
+from rdflib.namespace import RDF
 
 from app.crawler.discovery import RegisterInfo
 from app.crawler.http import get_json
@@ -145,6 +150,86 @@ def _resolved_property_bindings(resolved_properties_json: dict) -> list[tuple[st
     return list(dict.fromkeys(pairs))  # de-dup identical (path, uri) pairs, preserve order
 
 
+# Vocabulary-shaped but not real: examples routinely use these as illustrative subject/object
+# IRIs (RFC 2606 reserved domains, plus the ubiquitous "http://example.org/..." convention). A
+# predicate or rdf:type value under one of these is placeholder data, not a real semantic
+# binding worth indexing -- it would only add lookup noise, since a caller querying bblock_uris
+# for a genuine vocabulary term would never search for "example.org" in the first place.
+_PLACEHOLDER_NAMESPACE_PREFIXES = (
+    "http://example.org/",
+    "https://example.org/",
+    "http://example.com/",
+    "https://example.com/",
+    "http://example.net/",
+    "https://example.net/",
+    "http://example.edu/",
+    "https://example.edu/",
+)
+
+
+def _is_placeholder_uri(uri: str) -> bool:
+    return uri.startswith(_PLACEHOLDER_NAMESPACE_PREFIXES)
+
+
+def _turtle_predicate_uris(ttl_text: str) -> list[str]:
+    """Predicate URIs used anywhere in a Turtle example snippet, plus `rdf:type` *object* values
+    (also vocabulary terms, just not predicates -- e.g. `a sosa:Observation`). Unlike
+    `_resolved_property_bindings`'s `effectiveId`s, these describe terms a bblock's example data
+    *uses*, not ones its schema *declares* -- see docs/06-semantic-binding-lookup-plan.md's
+    "Example-derived bindings" for why that distinction matters for ranking. Best-effort: a
+    malformed snippet is the register's own responsibility to keep valid (its CI checks this),
+    not this crawler's -- logged and skipped, not fatal to the rest of the bblock.
+
+    A Turtle predicate position is always a full IRI (`URIRef`), never a blank node or literal,
+    so no separate blank-node filtering is needed there; `rdf:type`'s object, unlike a normal
+    predicate's object, is restricted the same way here since it's semantically a class IRI, not
+    arbitrary triple data.
+    """
+    graph = Graph()
+    try:
+        graph.parse(data=ttl_text, format="turtle")
+    except Exception as exc:  # noqa: BLE001 - best-effort, matches this module's fetch handling
+        logger.warning("Failed to parse Turtle example snippet: %s", exc)
+        return []
+
+    uris: list[str] = []
+    for subject, predicate, obj in graph:
+        if isinstance(predicate, URIRef) and not _is_placeholder_uri(str(predicate)):
+            uris.append(str(predicate))
+        if predicate == RDF.type and isinstance(obj, URIRef) and not _is_placeholder_uri(str(obj)):
+            uris.append(str(obj))
+    return list(dict.fromkeys(uris))  # de-dup, preserve first-seen order
+
+
+def _example_bindings(json_full_doc: dict) -> list[tuple[str, str]]:
+    """(path, uri) pairs scraped from each example's Turtle snippet (`language` "ttl" or
+    "turtle"), if present -- already inlined as `code` text in `json_full_doc["examples"]`, no
+    extra fetch needed (see `_bblock_usage_text`, which reads the same `examples` array for its
+    JSON snippet). `path` here is `"example:<title>"` (or `"example:<index>"` for an untitled
+    example), not a schema property path -- a Turtle triple has no notion of "the JSON Schema
+    property this came from". The caller tags these `source="example"` (see
+    `build_register_chunks`) to keep them distinguishable from declared (`source="schema"`)
+    bindings for ranking purposes.
+    """
+    pairs: list[tuple[str, str]] = []
+    for index, example in enumerate(json_full_doc.get("examples") or []):
+        if not isinstance(example, dict):
+            continue
+        ttl_code = next(
+            (
+                snippet.get("code")
+                for snippet in example.get("snippets") or []
+                if isinstance(snippet, dict) and snippet.get("language") in ("ttl", "turtle") and snippet.get("code")
+            ),
+            None,
+        )
+        if not ttl_code:
+            continue
+        label = example.get("title") or str(index)
+        pairs.extend((f"example:{label}", uri) for uri in _turtle_predicate_uris(ttl_code))
+    return list(dict.fromkeys(pairs))  # de-dup identical (path, uri) pairs, preserve order
+
+
 def _bblock_usage_text(raw_bblock: dict, json_full_doc: dict) -> str:
     """`sources` (specs/papers this block is based on) and `transforms` (conversions it
     supports, e.g. "convert to CSV") describe how this block relates to and can be used with
@@ -186,20 +271,21 @@ def _bblock_usage_text(raw_bblock: dict, json_full_doc: dict) -> str:
 
 async def build_register_chunks(
     client: httpx.AsyncClient, register_info: RegisterInfo, register_json: dict
-) -> tuple[list[Chunk], dict[str, str], list[str], dict[str, list[tuple[str, str]]]]:
+) -> tuple[list[Chunk], dict[str, str], list[str], dict[str, list[tuple[str, str, str]]]]:
     """Returns the chunks to embed, a bblock_id -> description map (sourced from the same
     json-full doc fetched below for the bblock_description chunk, not register.json -- which has
     no per-bblock description field) for the caller to also feed into the FTS5 keyword index, the
     ids of bblocks whose main (json-full) metadata failed to fetch -- the caller uses this to
     surface the register as having partial results rather than a silent full success -- and a
-    bblock_id -> (path, uri) list map of semantic bindings for the caller to feed into the
-    bblock_uris reverse index (see docs/06-semantic-binding-lookup-plan.md). A bblock absent from
-    this last map simply has no resolvedSchemaProperties, or none of its properties carry a
-    semantic binding -- not an error case."""
+    bblock_id -> (path, uri, source) list map of semantic bindings for the caller to feed into
+    the bblock_uris reverse index (see docs/06-semantic-binding-lookup-plan.md). `source` is
+    "schema" (resolvedSchemaProperties) or "example" (a Turtle example snippet). A bblock absent
+    from this last map simply has no resolvedSchemaProperties and no Turtle examples, or none of
+    those carry a semantic binding -- not an error case."""
     chunks: list[Chunk] = []
     descriptions: dict[str, str] = {}
     failed_bblock_ids: list[str] = []
-    bindings: dict[str, list[tuple[str, str]]] = {}
+    bindings: dict[str, list[tuple[str, str, str]]] = {}
 
     summary_text = _register_summary_text(register_json)
     if summary_text:
@@ -304,10 +390,12 @@ async def build_register_chunks(
         if not schema_text and resolved_json:
             schema_text = _resolved_properties_text(resolved_json)  # unchanged fallback behavior
 
+        bblock_bindings: list[tuple[str, str, str]] = []
         if resolved_json:
-            bblock_bindings = _resolved_property_bindings(resolved_json)
-            if bblock_bindings:
-                bindings[bblock_id] = bblock_bindings
+            bblock_bindings.extend((path, uri, "schema") for path, uri in _resolved_property_bindings(resolved_json))
+        bblock_bindings.extend((path, uri, "example") for path, uri in _example_bindings(json_full_doc))
+        if bblock_bindings:
+            bindings[bblock_id] = bblock_bindings
 
         if schema_text:
             chunks.append(

@@ -145,7 +145,12 @@ async def find_bblocks_by_uri_endpoint(
         summary = BblockSummary.model_validate(bblock)
         summaries.append(
             summary.model_copy(
-                update={"matched_uri": match.uri, "matched_path": match.path, "match_type": match.match_type}
+                update={
+                    "matched_uri": match.uri,
+                    "matched_path": match.path,
+                    "match_type": match.match_type,
+                    "matched_source": match.source,
+                }
             )
         )
 

@@ -201,15 +201,16 @@ async def test_bblock_uris_replace_roundtrip(db_session):
     await _seed_bblock(db_session, "ogc.main.a")
     await db_session.commit()
 
-    await bblock_uris_repo.replace_bblock_uris(db_session, "ogc.main.a", [("lat", "http://example.org/ns/lat")])
+    await bblock_uris_repo.replace_bblock_uris(db_session, "ogc.main.a", [("lat", "http://example.org/ns/lat", "schema")])
     await db_session.commit()
     matches, total = await bblock_uris_repo.find_bblocks_by_uri(db_session, "http://example.org/ns/lat")
     assert total == 1
     assert matches[0].path == "lat"
     assert matches[0].match_type == "exact"
+    assert matches[0].source == "schema"
 
     # A second call replaces the bblock's rows rather than appending to them.
-    await bblock_uris_repo.replace_bblock_uris(db_session, "ogc.main.a", [("long", "http://example.org/ns/long")])
+    await bblock_uris_repo.replace_bblock_uris(db_session, "ogc.main.a", [("long", "http://example.org/ns/long", "schema")])
     await db_session.commit()
     _, total = await bblock_uris_repo.find_bblocks_by_uri(db_session, "http://example.org/ns/lat")
     assert total == 0
@@ -226,9 +227,9 @@ async def test_find_bblocks_by_uri_modes(db_session):
 
     # b's URI is a strict extension of a's -- exercises the "exact sorts before prefix" ordering
     # invariant and the "exact" match_type still applying under mode="prefix" for a itself.
-    await bblock_uris_repo.replace_bblock_uris(db_session, "ogc.main.a", [("prop", "http://example.org/ns/term")])
+    await bblock_uris_repo.replace_bblock_uris(db_session, "ogc.main.a", [("prop", "http://example.org/ns/term", "schema")])
     await bblock_uris_repo.replace_bblock_uris(
-        db_session, "ogc.main.b", [("prop", "http://example.org/ns/term/nested")]
+        db_session, "ogc.main.b", [("prop", "http://example.org/ns/term/nested", "schema")]
     )
     await db_session.commit()
 
@@ -261,6 +262,35 @@ async def test_find_bblocks_by_uri_modes(db_session):
     assert no_match == []
 
 
+async def test_find_bblocks_by_uri_ranks_schema_source_before_example_at_same_match_type(db_session):
+    """A declared (source="schema") binding should outrank an incidental (source="example",
+    scraped from a Turtle example snippet) one when both tie on match_type -- see
+    docs/06-semantic-binding-lookup-plan.md's "Example-derived bindings" addendum. Uses two
+    exact-match rows on the *same* uri (from different bblocks) so match_type can't already
+    explain the ordering by itself."""
+    await _seed_org_and_register(db_session)
+    await _seed_bblock(db_session, "ogc.main.example_only")
+    await _seed_bblock(db_session, "ogc.main.schema")
+    await db_session.commit()
+
+    # Insert example-sourced first, to confirm ordering isn't just insertion order.
+    await bblock_uris_repo.replace_bblock_uris(
+        db_session, "ogc.main.example_only", [("example:Sample", "http://example.org/ns/term", "example")]
+    )
+    await bblock_uris_repo.replace_bblock_uris(
+        db_session, "ogc.main.schema", [("prop", "http://example.org/ns/term", "schema")]
+    )
+    await db_session.commit()
+
+    matches, total = await bblock_uris_repo.find_bblocks_by_uri(db_session, "http://example.org/ns/term")
+
+    assert total == 2
+    assert [(m.bblock_id, m.source) for m in matches] == [
+        ("ogc.main.schema", "schema"),
+        ("ogc.main.example_only", "example"),
+    ]
+
+
 async def test_find_bblocks_by_uri_prefix_is_boundary_anchored(db_session):
     """Regression test for the false-positive a plain string-prefix match would have: a uri
     that merely starts with the same characters as the query, but isn't nested under it at a
@@ -272,12 +302,12 @@ async def test_find_bblocks_by_uri_prefix_is_boundary_anchored(db_session):
 
     # Genuinely nested under the "http://example.org/ns/term" namespace...
     await bblock_uris_repo.replace_bblock_uris(
-        db_session, "ogc.main.nested", [("prop", "http://example.org/ns/term/child")]
+        db_session, "ogc.main.nested", [("prop", "http://example.org/ns/term/child", "schema")]
     )
     # ...vs. merely sharing the same leading characters, with no separator in between -- a
     # different term entirely, not a member of the "term" namespace.
     await bblock_uris_repo.replace_bblock_uris(
-        db_session, "ogc.main.sibling", [("prop", "http://example.org/ns/termOther")]
+        db_session, "ogc.main.sibling", [("prop", "http://example.org/ns/termOther", "schema")]
     )
     await db_session.commit()
 
@@ -300,7 +330,7 @@ async def test_bblock_uris_cascade_deleted_with_register(db_session):
     await _seed_org_and_register(db_session)
     await _seed_bblock(db_session, "ogc.main.a")
     await db_session.commit()
-    await bblock_uris_repo.replace_bblock_uris(db_session, "ogc.main.a", [("prop", "http://example.org/ns/term")])
+    await bblock_uris_repo.replace_bblock_uris(db_session, "ogc.main.a", [("prop", "http://example.org/ns/term", "schema")])
     await db_session.commit()
 
     _, total = await bblock_uris_repo.find_bblocks_by_uri(db_session, "http://example.org/ns/term")
@@ -331,7 +361,7 @@ async def test_find_bblocks_by_uri_prefix_query_uses_index(db_session):
     await _seed_org_and_register(db_session)
     await _seed_bblock(db_session, "ogc.main.a")
     await db_session.commit()
-    await bblock_uris_repo.replace_bblock_uris(db_session, "ogc.main.a", [("prop", "http://example.org/ns/term")])
+    await bblock_uris_repo.replace_bblock_uris(db_session, "ogc.main.a", [("prop", "http://example.org/ns/term", "schema")])
     await db_session.commit()
 
     plan = await db_session.execute(

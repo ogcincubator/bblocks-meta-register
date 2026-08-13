@@ -115,7 +115,7 @@ async def test_bblocks_by_uri_endpoint(db_session, api_client):
     from app.repositories.bblock_uris import replace_bblock_uris
 
     await replace_bblock_uris(
-        db_session, "ogc.main.a", [("prop", "http://www.w3.org/ns/sosa/observedProperty")]
+        db_session, "ogc.main.a", [("prop", "http://www.w3.org/ns/sosa/observedProperty", "schema")]
     )
     await db_session.commit()
 
@@ -129,6 +129,7 @@ async def test_bblocks_by_uri_endpoint(db_session, api_client):
     assert body["items"][0]["id"] == "ogc.main.a"
     assert body["items"][0]["matched_uri"] == "http://www.w3.org/ns/sosa/observedProperty"
     assert body["items"][0]["match_type"] == "exact"
+    assert body["items"][0]["matched_source"] == "schema"
 
     # Prefix match against the containing namespace.
     response = await api_client.get(

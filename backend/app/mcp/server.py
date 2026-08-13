@@ -147,7 +147,9 @@ async def find_bblocks_by_semantic_binding(
     has a specific vocabulary/term URI or namespace in hand; use search_bblocks instead for a
     natural-language description of what's needed. Each result carries `matched_uri`,
     `matched_path` (best-effort schema property path -- not guaranteed absolute, see the field
-    itself), and `match_type` ("exact" or "prefix").
+    itself), `match_type` ("exact" or "prefix"), and `matched_source` ("schema" if the bblock's
+    author declared this binding, "example" if it was only found in a Turtle example snippet).
+    Results are ordered exact-before-prefix, then declared-before-example-only within each.
 
     Args:
         uri: RDF/vocabulary URI (or, under mode="prefix"/"both", a namespace prefix) to look up,
@@ -175,10 +177,11 @@ async def find_bblocks_by_semantic_binding(
             summary = BblockSummary.model_validate(bblock)
             items.append(
                 {
-                    **summary.model_dump(exclude={"matched_uri", "matched_path", "match_type"}),
+                    **summary.model_dump(exclude={"matched_uri", "matched_path", "match_type", "matched_source"}),
                     "matched_uri": match.uri,
                     "matched_path": match.path,
                     "match_type": match.match_type,
+                    "matched_source": match.source,
                 }
             )
         return {"numberMatched": total, "numberReturned": len(items), "items": items}

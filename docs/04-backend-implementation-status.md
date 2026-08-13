@@ -9,11 +9,14 @@ from the code. Broad strokes only — read the docs above and the code itself fo
 - **Data model**: `orgs` → `registers` → `bblocks` hierarchy as SQLAlchemy ORM (real FKs, relationships), plus
   `bblock_deps`/`register_deps`/`identifier_conflicts`/`crawl_runs` as plain SQLAlchemy Core tables (no FK on the
   dependency edges' target side, by design — see doc 02's "Identifier conflicts" and dependency graph sections).
-  Migrations via Alembic, five revisions as of this writing (`0001_initial.py` through
-  `0005_bblock_uris.py` — see "Migration convention" below). `Register` also has an admin-only `status` field
-  (`pending`/`crawling`/`ready`/`failed`, distinct from the public `last_crawl_status`) — see "Crawler" below.
-  `bblock_uris` (`0005`, see below) is a reverse index of `(bblock_id, uri, path)` semantic-binding triples —
-  see [06-semantic-binding-lookup-plan.md](06-semantic-binding-lookup-plan.md).
+  Migrations via Alembic, six revisions as of this writing (`0001_initial.py` through
+  `0006_bblock_uris_source.py` — see "Migration convention" below). `Register` also has an admin-only `status`
+  field (`pending`/`crawling`/`ready`/`failed`, distinct from the public `last_crawl_status`) — see "Crawler" below.
+  `bblock_uris` (`0005`, `source` column added in `0006`, see below) is a reverse index of
+  `(bblock_id, uri, path, source)` semantic-binding rows — see
+  [06-semantic-binding-lookup-plan.md](06-semantic-binding-lookup-plan.md). `source` is `"schema"` (declared via
+  `resolvedSchemaProperties`) or `"example"` (scraped from a Turtle example snippet — doc 06's "Example-derived
+  bindings" addendum) and is used as a ranking tiebreaker, not just metadata.
 - **Crawler**: full pipeline per doc 02 including embeddings — discovery (`meta-register.json`/`meta-register-orgs.json`),
   per-register fetch, change detection (`modified` timestamp equality), full-replace indexing (relational rows +
   dependency edges + identifier-conflict rejection), search-content indexing (chunking + embeddings, see "Hybrid
@@ -34,7 +37,8 @@ from the code. Broad strokes only — read the docs above and the code itself fo
   `X-Admin-Api-Key` header if `BBLOCKS_ADMIN_API_KEY` is set (unset = unprotected, fine for local dev only).
   `GET /bblocks/by-uri?uri=&mode=exact|prefix|both` — exact/prefix lookup against `bblock_uris`, doc 06's semantic
   binding lookup (registered ahead of `GET /bblocks/{identifier}` in the router so it isn't swallowed as an
-  `identifier` match); not part of doc 02's original endpoint table, added by doc 06.
+  `identifier` match); not part of doc 02's original endpoint table, added by doc 06. Each result also carries
+  `matched_source` (`"schema"`/`"example"`, see above).
   `CORSMiddleware` allows any origin on GET requests (`app/main.py`) — safe to leave permissive since the API is
   public/read-only by design, and it's what lets the frontend (see doc 05) call it directly without a dev proxy.
 - **`GET /bblocks?q=`** is doc 03's hybrid search (see below), not the earlier `LIKE` placeholder.

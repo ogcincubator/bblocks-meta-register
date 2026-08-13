@@ -51,8 +51,17 @@ bblock_uris = Table(
     # Best-effort, dot-joined property path (e.g. "location.lat") to the property this URI was
     # bound to -- see docs/06-semantic-binding-lookup-plan.md's "ref/defs deduplication" note:
     # relative to the referencing property for defs-derived entries, not always absolute from
-    # the doc root. Carried along purely for eyeballing/debugging, not queried on.
+    # the doc root. Carried along purely for eyeballing/debugging, not queried on. For an
+    # "example"-sourced row (see below) this is "example:<title>" instead of a schema path --
+    # still just eyeballing/debugging material, never queried on.
     Column("path", String, nullable=True),
+    # "schema" (resolvedProperties.json's effectiveId -- the bblock's author declared this
+    # binding) or "example" (scraped from a Turtle example snippet -- the bblock merely
+    # *uses* the term in sample data, not a declared binding). Used as a ranking tiebreaker
+    # in find_bblocks_by_uri: a declared binding should outrank an incidental one at the same
+    # match_type. See docs/06-semantic-binding-lookup-plan.md's "Example-derived bindings"
+    # addendum.
+    Column("source", String, nullable=False, server_default="schema"),
 )
 
 identifier_conflicts = Table(
