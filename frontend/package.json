@@ -29,7 +29,8 @@
     "@eslint/eslintrc/**/brace-expansion": "^1.1.18",
     "@eslint/config-array/**/brace-expansion": "^1.1.18",
     "immutable": "^5.1.9",
-    "js-yaml": "^4.3.1"
+    "js-yaml": "^4.3.1",
+    "esbuild": "^0.28.1"
   },
   "devDependencies": {
     "@intellectronica/ruler": "^0.3.37",
