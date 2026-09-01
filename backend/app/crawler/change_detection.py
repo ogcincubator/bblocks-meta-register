@@ -1,4 +1,4 @@
-INDEXER_VERSION = 4
+INDEXER_VERSION = 5
 """Bump this whenever a change to app/crawler/indexer.py's extraction/transform logic (e.g.
 _extract_presence, _extract_edges) would produce different stored data for a register whose
 register.json `modified` timestamp hasn't changed -- otherwise needs_reindex() only compares
@@ -15,7 +15,13 @@ rule still applies.
 alongside the existing source="schema" rows) -- see chunking.py's _example_bindings(). Every
 already-crawled register's stored bblock_uris.source defaults to "schema" via the 0006 migration
 regardless of whether that row was actually schema- or example-derived, so a full reindex is
-needed to backfill it correctly, not just to pick up the new example-derived rows themselves."""
+needed to backfill it correctly, not just to pick up the new example-derived rows themselves.
+
+5: bblock_uris rows now also come from a bblock's own `ontology` file, if any (source="ontology"
+-- the highest-ranked tier, ahead of "schema" and "example") -- see chunking.py's
+_ontology_bindings()/docs/06's "Ontology-derived bindings" addendum. A full reindex is needed to
+populate these new rows; there's no backfill-correctness concern this time (unlike bump 4)
+since "ontology" is a brand new value, not a reinterpretation of an existing default."""
 
 
 def needs_reindex(stored_modified: str | None, fetched_modified: str | None, stored_indexer_version: int | None) -> bool:

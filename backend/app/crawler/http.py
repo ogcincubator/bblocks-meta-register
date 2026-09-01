@@ -51,11 +51,11 @@ class PerHostThrottle:
 _throttle = PerHostThrottle(settings.crawl_per_host_min_interval_seconds, settings.crawl_per_host_jitter_seconds)
 
 
-async def get_json(client: httpx.AsyncClient, url: str) -> dict | list:
-    """GET a URL and parse JSON, honoring per-host throttling and retrying with exponential
-    backoff on 429/5xx (a host signaling it's overloaded should be backed off, not hammered).
-    Holds the per-host lock for the whole call so at most one request per host is ever in
-    flight, even across concurrent register-crawl workers."""
+async def _get_with_retry(client: httpx.AsyncClient, url: str) -> httpx.Response:
+    """Shared throttled-GET-with-retry core for get_json/get_text -- honors per-host throttling
+    and retries with exponential backoff on 429/5xx (a host signaling it's overloaded should be
+    backed off, not hammered). Holds the per-host lock for the whole call so at most one request
+    per host is ever in flight, even across concurrent register-crawl workers."""
     host = urlsplit(url).netloc
     last_exc: Exception | None = None
     async with _throttle.lock_for(host):
@@ -81,12 +81,29 @@ async def get_json(client: httpx.AsyncClient, url: str) -> dict | list:
                 continue
 
             response.raise_for_status()
-            return response.json()
+            return response
 
     logger.error("Giving up on %s after %d attempts", url, settings.http_max_retries)
     raise last_exc or httpx.HTTPStatusError(
         f"Exhausted retries fetching {url}", request=None, response=None  # type: ignore[arg-type]
     )
+
+
+async def get_json(client: httpx.AsyncClient, url: str) -> dict | list:
+    """GET a URL and parse JSON. See _get_with_retry for throttling/retry behavior."""
+    response = await _get_with_retry(client, url)
+    return response.json()
+
+
+async def get_text(client: httpx.AsyncClient, url: str) -> tuple[str, str | None]:
+    """GET a URL, returning (body text, Content-Type header) rather than parsing JSON -- used for
+    non-JSON documents like an `ontology` file (Turtle or RDF/XML; see
+    app/search/chunking.py's `_ontology_bindings()`). The Content-Type is returned alongside the
+    body since it's one of the signals used to pick an rdflib parser format when the URL's file
+    extension alone doesn't say (e.g. no extension, or an extension-less redirect target). See
+    _get_with_retry for throttling/retry behavior."""
+    response = await _get_with_retry(client, url)
+    return response.text, response.headers.get("content-type")
 
 
 def make_client() -> httpx.AsyncClient:

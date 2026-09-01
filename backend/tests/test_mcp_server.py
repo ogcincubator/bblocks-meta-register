@@ -65,6 +65,23 @@ async def test_find_bblocks_by_semantic_binding_tool(db_session, mcp_tools):
         await mcp_tools.find_bblocks_by_semantic_binding("short", mode="prefix")
 
 
+async def test_find_bblocks_by_semantic_binding_tool_sources_filter(db_session, mcp_tools):
+    await _seed(db_session)
+    await replace_bblock_uris(db_session, "ogc.main.a", [("ontology", "http://example.org/ns/term", "ontology")])
+    await db_session.commit()
+
+    body = await mcp_tools.find_bblocks_by_semantic_binding("http://example.org/ns/term")
+    assert body["numberMatched"] == 1
+    assert body["items"][0]["matched_source"] == "ontology"
+
+    # A caller looking for schemas to compose/extend excludes ontology-only matches.
+    body = await mcp_tools.find_bblocks_by_semantic_binding(
+        "http://example.org/ns/term", sources=["schema", "example"]
+    )
+    assert body["numberMatched"] == 0
+    assert body["items"] == []
+
+
 async def test_get_bblock_tool(db_session, mcp_tools):
     await _seed(db_session)
 

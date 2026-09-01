@@ -55,12 +55,14 @@ bblock_uris = Table(
     # "example"-sourced row (see below) this is "example:<title>" instead of a schema path --
     # still just eyeballing/debugging material, never queried on.
     Column("path", String, nullable=True),
-    # "schema" (resolvedProperties.json's effectiveId -- the bblock's author declared this
-    # binding) or "example" (scraped from a Turtle example snippet -- the bblock merely
-    # *uses* the term in sample data, not a declared binding). Used as a ranking tiebreaker
-    # in find_bblocks_by_uri: a declared binding should outrank an incidental one at the same
-    # match_type. See docs/06-semantic-binding-lookup-plan.md's "Example-derived bindings"
-    # addendum.
+    # "ontology" (a term the bblock's own ontology file defines -- see chunking.py's
+    # _ontology_bindings()), "schema" (resolvedProperties.json's effectiveId -- the bblock's
+    # author declared this binding to an external term), or "example" (scraped from a Turtle
+    # example snippet -- the bblock merely *uses* the term in sample data, not a declared
+    # binding). Used as a ranking tiebreaker in find_bblocks_by_uri: "ontology" > "schema" >
+    # "example" (see repositories/bblock_uris.py's _SOURCE_RANK). See
+    # docs/06-semantic-binding-lookup-plan.md's "Example-derived bindings" / "Ontology-derived
+    # bindings" addenda.
     Column("source", String, nullable=False, server_default="schema"),
 )
 

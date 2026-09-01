@@ -3,7 +3,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 
 from app.api.deps import EmbeddingProviderDep, SessionDep
-from app.repositories.bblock_uris import MIN_PREFIX_LENGTH, find_bblocks_by_uri
+from app.repositories.bblock_uris import MIN_PREFIX_LENGTH, BindingSource, find_bblocks_by_uri
 from app.repositories.bblocks import get_bblock, get_bblocks_by_ids, list_bblocks
 from app.repositories.deps import incoming_bblock_deps, outgoing_bblock_deps
 from app.repositories.registers import get_register_url
@@ -122,6 +122,13 @@ async def find_bblocks_by_uri_endpoint(
         description="'exact' matches only this exact URI; 'prefix' matches any URI under this prefix "
         "(e.g. the whole 'http://www.w3.org/ns/sosa/' namespace); 'both' returns both, exact matches first.",
     ),
+    sources: list[BindingSource] | None = Query(
+        default=None,
+        description="Restrict to these binding source(s) ('ontology', 'schema', 'example'; repeat the "
+        "param for more than one). Omit to match all sources. E.g. a caller composing/extending "
+        "schemas, uninterested in bblocks that only match via a term their own ontology defines "
+        "rather than a schema binding, would pass sources=schema&sources=example.",
+    ),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> BblockListResponse:
@@ -134,7 +141,9 @@ async def find_bblocks_by_uri_endpoint(
             f"near-full-table scan (got {len(uri)}). Use mode='exact' for a short exact value.",
         )
 
-    matches, total = await find_bblocks_by_uri(session, uri, mode=mode, limit=limit, offset=offset)
+    matches, total = await find_bblocks_by_uri(
+        session, uri, mode=mode, sources=tuple(sources) if sources else None, limit=limit, offset=offset
+    )
 
     bblocks_by_id = await get_bblocks_by_ids(session, [m.bblock_id for m in matches])
     summaries = []

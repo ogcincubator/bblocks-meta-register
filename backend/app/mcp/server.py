@@ -17,7 +17,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from app.config import settings
 from app.db.base import session_scope
-from app.repositories.bblock_uris import MIN_PREFIX_LENGTH, find_bblocks_by_uri
+from app.repositories.bblock_uris import MIN_PREFIX_LENGTH, BindingSource, find_bblocks_by_uri
 from app.repositories.bblocks import get_bblock as repo_get_bblock
 from app.repositories.bblocks import get_bblocks_by_ids, list_bblocks
 from app.repositories.deps import (
@@ -138,6 +138,7 @@ async def search_bblocks(
 async def find_bblocks_by_semantic_binding(
     uri: str,
     mode: Literal["exact", "prefix", "both"] = "both",
+    sources: list[BindingSource] | None = None,
     limit: int = 20,
 ) -> dict:
     """Find bblocks that bind a schema property to a specific RDF/vocabulary URI, or to any term
@@ -147,9 +148,11 @@ async def find_bblocks_by_semantic_binding(
     has a specific vocabulary/term URI or namespace in hand; use search_bblocks instead for a
     natural-language description of what's needed. Each result carries `matched_uri`,
     `matched_path` (best-effort schema property path -- not guaranteed absolute, see the field
-    itself), `match_type` ("exact" or "prefix"), and `matched_source` ("schema" if the bblock's
-    author declared this binding, "example" if it was only found in a Turtle example snippet).
-    Results are ordered exact-before-prefix, then declared-before-example-only within each.
+    itself), `match_type` ("exact" or "prefix"), and `matched_source` ("ontology" if the URI is a
+    term the bblock's own ontology file defines, "schema" if the bblock's author declared this
+    binding on a schema property, "example" if it was only found in a Turtle example snippet).
+    Results are ordered exact-before-prefix, then ontology-before-schema-before-example-only
+    within each.
 
     Args:
         uri: RDF/vocabulary URI (or, under mode="prefix"/"both", a namespace prefix) to look up,
@@ -157,6 +160,10 @@ async def find_bblocks_by_semantic_binding(
         mode: "exact" matches only this exact URI; "prefix" matches any URI under this prefix
             (e.g. the whole "http://www.w3.org/ns/sosa/" namespace); "both" (default) returns
             both, exact matches first.
+        sources: Restrict to these binding source(s) among "ontology", "schema", "example".
+            Omit (default) to match all three. E.g. a caller looking for schemas to compose or
+            extend, uninterested in bblocks that only match via a term their own ontology
+            defines rather than a schema binding, would pass sources=["schema", "example"].
         limit: Max number of results (1-200).
     """
     limit = max(1, min(limit, 200))
@@ -167,7 +174,9 @@ async def find_bblocks_by_semantic_binding(
         )
 
     async with session_scope() as session:
-        matches, total = await find_bblocks_by_uri(session, uri, mode=mode, limit=limit, offset=0)
+        matches, total = await find_bblocks_by_uri(
+            session, uri, mode=mode, sources=tuple(sources) if sources else None, limit=limit, offset=0
+        )
         bblocks_by_id = await get_bblocks_by_ids(session, [m.bblock_id for m in matches])
         items = []
         for match in matches:

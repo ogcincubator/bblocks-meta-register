@@ -436,3 +436,53 @@ on both `GET /bblocks/by-uri` and `find_bblocks_by_semantic_binding`.
 grammar (multi-line literals, nested blank-node syntax, `a` as a keyword synonym for `rdf:type`, base-relative
 IRIs, ...) has enough edge cases that a real parser earns its keep here; `rdflib` was added to
 `pyproject.toml` instead.
+
+## Ontology-derived bindings (built, addendum)
+
+**Status: built** (`INDEXER_VERSION` 4 → 5, no migration needed — `bblock_uris.source` is a plain `String`, not a
+DB-level enum, so a third value needs no schema change). `bblock_uris` gains a third, *highest*-confidence source:
+RDF/vocabulary terms a bblock's own `ontology` file **defines**, as opposed to a term it merely *declares a
+binding to* (`resolvedSchemaProperties`, `source="schema"`) or *uses* in sample data (a Turtle example,
+`source="example"`). An `ontology` file (`bblocks-authoring`'s "Ontology declaration": `ontology.ttl`/`ontology.owl`,
+auto-detected if `ontology` isn't set explicitly) is where a bblock is the *authoritative source* of a term, not
+just a consumer of one — strictly stronger evidence than either existing source, hence the new top tier.
+
+**Source of the URL**: unlike `resolvedSchemaProperties`/`ldContext`, `register.json`'s per-bblock entry carries
+the resolved `ontology` URL directly (`raw_bblock.get("ontology")` — see `bblocks-consuming`'s register.json field
+reference) — no per-bblock `json-full` lookup needed to find it, and no extra request beyond the one fetch to pull
+the file itself. That file isn't JSON, so it's fetched with a new `app/crawler/http.get_text()` (returns
+`(body, Content-Type header)`) rather than `get_json()`.
+
+**Format**: an ontology file is Turtle *or* RDF/XML (`.owl`), unlike an example's always-Turtle-tagged inline
+snippet, so `chunking._ontology_format()` picks the `rdflib` parser format from the URL's file extension first
+(`.ttl` → turtle, `.owl`/`.rdf` → xml), falling back to sniffing the `Content-Type` header, defaulting to turtle
+if neither is conclusive — matching the postprocessor's own auto-detection default.
+
+**Extraction — subjects, not predicates**: this is the mirror image of the example-derived extraction.
+`chunking._turtle_predicate_uris()` collects an example's *predicates* (plus `rdf:type` objects), because an
+example's *subjects* are throwaway instance IRIs (`ex:obs1`) and its predicates are the interesting vocabulary
+terms. An *ontology* file inverts that: its predicates (`rdf:type`, `rdfs:label`, `owl:equivalentClass`,
+`rdfs:subClassOf`, ...) are near-universally borrowed from well-known vocabularies and say nothing distinctive
+about this bblock, while its **subjects** (`<uri> a owl:Class`, `<uri> a owl:ObjectProperty`, ...) are the terms
+it actually mints. So `chunking._ontology_subject_uris()` collects every triple's subject, restricted to
+`URIRef` (a blank-node subject — e.g. an anonymous OWL restriction — isn't a vocabulary term with a URI of its
+own), reusing the same placeholder-namespace filter (`_is_placeholder_uri`) as the example extractor for
+consistency, even though an ontology file using `example.org` illustrative IRIs is unlikely in practice. No
+`rdf:type`-object special case is needed here (unlike the example extractor) — a class IRI already shows up
+directly as a subject in an ontology file, not only as an object.
+
+**Provenance and ranking**: like an example-derived row's `"example:<title>"`, an ontology-derived row's `path` is
+the constant `"ontology"` — an ontology-defined term has no schema property or per-example anchor to carry along,
+so the label is purely informational. `find_bblocks_by_uri`'s ranking tiebreaker becomes a proper three-tier
+`CASE` (`app/repositories/bblock_uris.py`'s `_SOURCE_RANK`: `"ontology"` → 2, `"schema"` → 1, `"example"` → 0)
+rather than the two-tier boolean flip the previous addendum introduced, ordered
+`(uri = :uri) DESC, source_rank DESC, uri, bblock_id`.
+
+**Filtering by source**: unlike the ranking-only `source` distinction the example addendum introduced,
+`find_bblocks_by_uri` (and both the `GET /bblocks/by-uri` and `find_bblocks_by_semantic_binding` surfaces) now
+also accept an optional `sources` filter (`tuple[BindingSource, ...] | None`, e.g. `("schema", "example")`) —
+prompted by a concrete use case: a caller looking for *schemas* to compose or extend isn't interested in a bblock
+that only matches because its ontology happens to define the queried term, with no schema binding to it at all.
+Filtered inside the repository query (not left to the caller to post-filter the returned page), so `total` and
+pagination stay correct for the filtered set rather than reporting counts that don't match what's actually
+returned.

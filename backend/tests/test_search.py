@@ -349,6 +349,66 @@ async def test_build_register_chunks_falls_back_to_resolved_properties_without_l
 
 
 @respx.mock
+async def test_build_register_chunks_fetches_ontology_bindings():
+    respx.get("https://x/ontology.ttl").mock(
+        return_value=httpx.Response(
+            200,
+            text="""
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix ex: <https://vocab.acme.test/real#> .
+            ex:MyClass a owl:Class .
+            """,
+        )
+    )
+    respx.get("https://x/resolved.json").mock(
+        return_value=httpx.Response(
+            200,
+            json={"properties": [{"path": ["a"], "effectiveId": "https://vocab.acme.test/real#a"}]},
+        )
+    )
+    register_json = {
+        "bblocks": [
+            {
+                "itemIdentifier": "ogc.main.a",
+                "name": "A",
+                "ontology": "https://x/ontology.ttl",
+                "resolvedSchemaProperties": "https://x/resolved.json",
+            }
+        ]
+    }
+
+    async with httpx.AsyncClient() as client:
+        _chunks, _descriptions, _failed_ids, bindings = await build_register_chunks(client, REGISTER_INFO, register_json)
+
+    # Ontology-sourced binding comes first (see chunking._SOURCE_RANK ordering intent), ahead of
+    # the schema-sourced one from resolvedSchemaProperties.
+    assert bindings == {
+        "ogc.main.a": [
+            ("ontology", "https://vocab.acme.test/real#MyClass", "ontology"),
+            ("a", "https://vocab.acme.test/real#a", "schema"),
+        ]
+    }
+
+
+@respx.mock
+async def test_build_register_chunks_skips_ontology_bindings_on_fetch_failure():
+    respx.get("https://x/ontology.ttl").mock(return_value=httpx.Response(500))
+    register_json = {
+        "bblocks": [
+            {"itemIdentifier": "ogc.main.a", "name": "A", "ontology": "https://x/ontology.ttl"},
+        ]
+    }
+
+    async with httpx.AsyncClient() as client:
+        chunks, descriptions, failed_ids, bindings = await build_register_chunks(client, REGISTER_INFO, register_json)
+
+    assert [c.chunk_type for c in chunks] == ["bblock_core"]
+    assert descriptions == {}
+    assert failed_ids == []
+    assert bindings == {}
+
+
+@respx.mock
 async def test_build_register_chunks_skips_failed_fetch_without_raising():
     respx.get("https://x/context.jsonld").mock(return_value=httpx.Response(500))
     register_json = {

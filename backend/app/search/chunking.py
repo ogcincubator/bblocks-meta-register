@@ -1,11 +1,14 @@
 """Builds the per-register/per-bblock text chunks docs/03-indexing-and-search.md's "Chunking
 strategy" describes, ready to hand to an EmbeddingProvider and then a VectorStore. Also builds
 the (path, uri, source) semantic-binding triples that feed the `bblock_uris` reverse index (see
-docs/06-semantic-binding-lookup-plan.md) -- a query-time lookup, not a search chunk. Two sources
-feed it: `resolvedSchemaProperties` (source="schema" -- a binding the bblock's author declared)
-and each example's Turtle snippet, if any (source="example" -- a term the bblock's sample data
-merely *uses*; see "Example-derived bindings" in doc 06). `source` lets a caller rank a declared
-binding ahead of an incidental one at the same match_type.
+docs/06-semantic-binding-lookup-plan.md) -- a query-time lookup, not a search chunk. Three
+sources feed it, in descending confidence order: the bblock's own `ontology` file, if any
+(source="ontology" -- a term this bblock *defines*, not merely binds to; see "Ontology-derived
+bindings" in doc 06), `resolvedSchemaProperties` (source="schema" -- a binding the bblock's
+author declared on a schema property), and each example's Turtle snippet, if any
+(source="example" -- a term the bblock's sample data merely *uses*; see "Example-derived
+bindings" in doc 06). `source` lets a caller rank a bblock's own vocabulary definitions ahead of
+a declared external binding, and either ahead of an incidental one, at the same match_type.
 
 `bblock_schema`, `bblock_description` and `bblock_usage` need content that isn't in
 register.json itself: the JSON-LD context (`ldContext` URL, field name -> semantic URI
@@ -34,13 +37,14 @@ description closely isn't held back by unrelated metadata sharing the same chunk
 """
 
 import logging
+from urllib.parse import urlsplit
 
 import httpx
 from rdflib import Graph, URIRef
 from rdflib.namespace import RDF
 
 from app.crawler.discovery import RegisterInfo
-from app.crawler.http import get_json
+from app.crawler.http import get_json, get_text
 from app.search.vector_store import Chunk
 
 logger = logging.getLogger(__name__)
@@ -230,6 +234,65 @@ def _example_bindings(json_full_doc: dict) -> list[tuple[str, str]]:
     return list(dict.fromkeys(pairs))  # de-dup identical (path, uri) pairs, preserve order
 
 
+# rdflib format name for each `ontology` file extension the postprocessor auto-detects (see
+# bblocks-authoring's "Ontology declaration": "ontology.ttl" or "ontology.owl"), plus ".rdf" for
+# a bblock that names its resource explicitly rather than relying on auto-detection. Not
+# exhaustive of every rdflib-supported serialization -- ontology files in this ecosystem are
+# only ever Turtle or RDF/XML in practice, matching the two extensions the postprocessor itself
+# auto-detects.
+_ONTOLOGY_EXTENSION_FORMATS = {".ttl": "turtle", ".owl": "xml", ".rdf": "xml"}
+
+
+def _ontology_format(url: str, content_type: str | None) -> str:
+    """Picks the rdflib parser format for an `ontology` URL: the file extension first (covers
+    the common case, including a URL with no discriminating Content-Type such as a raw GitHub
+    file), falling back to sniffing the Content-Type header for the handful of registers that
+    serve `ontology.owl` as RDF/XML without a recognizable extension. Defaults to "turtle" --
+    the postprocessor's own auto-detection default -- when neither signal is conclusive, rather
+    than raising before even trying to parse."""
+    path = urlsplit(url).path.lower()
+    for ext, fmt in _ONTOLOGY_EXTENSION_FORMATS.items():
+        if path.endswith(ext):
+            return fmt
+    if content_type and "xml" in content_type.lower():
+        return "xml"
+    return "turtle"
+
+
+def _ontology_subject_uris(rdf_text: str, rdf_format: str) -> list[str]:
+    """Subject URIs of every triple in an ontology document -- the terms this bblock *defines*
+    (a class, property, individual, ...), not the (mostly boilerplate, borrowed-vocabulary)
+    predicates used to describe them. This is the mirror image of `_turtle_predicate_uris()`:
+    an example's subjects are throwaway instance IRIs and its predicates are the vocabulary
+    terms of interest, whereas an ontology's *subjects* are the vocabulary terms it mints and
+    its predicates (`rdf:type`, `rdfs:label`, `owl:equivalentClass`, ...) are near-universally
+    borrowed from well-known vocabularies and say nothing distinctive about this bblock. A blank
+    node subject (e.g. an anonymous OWL restriction) isn't a vocabulary term with a URI of its
+    own, so only `URIRef` subjects are collected. Best-effort, same as `_turtle_predicate_uris`:
+    a malformed/unparseable document is logged and skipped, not fatal to the rest of the bblock.
+    """
+    graph = Graph()
+    try:
+        graph.parse(data=rdf_text, format=rdf_format)
+    except Exception as exc:  # noqa: BLE001 - best-effort, matches this module's fetch handling
+        logger.warning("Failed to parse ontology document (format=%s): %s", rdf_format, exc)
+        return []
+
+    uris: list[str] = []
+    for subject in graph.subjects():
+        if isinstance(subject, URIRef) and not _is_placeholder_uri(str(subject)):
+            uris.append(str(subject))
+    return list(dict.fromkeys(uris))  # de-dup, preserve first-seen order
+
+
+def _ontology_bindings(rdf_text: str, rdf_format: str) -> list[tuple[str, str]]:
+    """(path, uri) pairs for an ontology document's subject URIs, `path`-tagged `"ontology"` --
+    unlike a schema binding or an example (each tied to a specific property/example), an
+    ontology-defined term has no such anchor to carry along, so the constant label is purely
+    informational, same spirit as `_example_bindings()`'s `"example:<title>"`."""
+    return [("ontology", uri) for uri in _ontology_subject_uris(rdf_text, rdf_format)]
+
+
 def _bblock_usage_text(raw_bblock: dict, json_full_doc: dict) -> str:
     """`sources` (specs/papers this block is based on) and `transforms` (conversions it
     supports, e.g. "convert to CSV") describe how this block relates to and can be used with
@@ -279,9 +342,9 @@ async def build_register_chunks(
     surface the register as having partial results rather than a silent full success -- and a
     bblock_id -> (path, uri, source) list map of semantic bindings for the caller to feed into
     the bblock_uris reverse index (see docs/06-semantic-binding-lookup-plan.md). `source` is
-    "schema" (resolvedSchemaProperties) or "example" (a Turtle example snippet). A bblock absent
-    from this last map simply has no resolvedSchemaProperties and no Turtle examples, or none of
-    those carry a semantic binding -- not an error case."""
+    "ontology" (the bblock's own ontology file), "schema" (resolvedSchemaProperties), or
+    "example" (a Turtle example snippet). A bblock absent from this last map simply has none of
+    those three, or none of them carry a semantic binding -- not an error case."""
     chunks: list[Chunk] = []
     descriptions: dict[str, str] = {}
     failed_bblock_ids: list[str] = []
@@ -390,7 +453,20 @@ async def build_register_chunks(
         if not schema_text and resolved_json:
             schema_text = _resolved_properties_text(resolved_json)  # unchanged fallback behavior
 
-        bblock_bindings: list[tuple[str, str, str]] = []
+        # `ontology` is a plain URL string on the raw bblock entry (register.json), unlike
+        # `resolvedSchemaProperties`/`ldContext` -- no per-bblock json-full lookup needed to
+        # find it. Not JSON, so fetched with get_text (Turtle or RDF/XML) rather than get_json.
+        ontology_bindings: list[tuple[str, str]] = []
+        ontology_url = raw_bblock.get("ontology")
+        if ontology_url:
+            try:
+                ontology_text, content_type = await get_text(client, ontology_url)
+            except Exception as exc:  # noqa: BLE001 - best-effort: skip these bindings, keep the bblock
+                logger.warning("Failed to fetch ontology for %s from %s: %s", bblock_id, ontology_url, exc)
+            else:
+                ontology_bindings = _ontology_bindings(ontology_text, _ontology_format(ontology_url, content_type))
+
+        bblock_bindings: list[tuple[str, str, str]] = [(path, uri, "ontology") for path, uri in ontology_bindings]
         if resolved_json:
             bblock_bindings.extend((path, uri, "schema") for path, uri in _resolved_property_bindings(resolved_json))
         bblock_bindings.extend((path, uri, "example") for path, uri in _example_bindings(json_full_doc))

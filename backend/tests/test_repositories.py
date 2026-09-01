@@ -291,6 +291,77 @@ async def test_find_bblocks_by_uri_ranks_schema_source_before_example_at_same_ma
     ]
 
 
+async def test_find_bblocks_by_uri_ranks_ontology_source_ahead_of_schema_and_example(db_session):
+    """The three-tier ranking's top tier: a term the bblock's own ontology *defines*
+    (source="ontology") outranks both a declared schema binding and an example-only use, at the
+    same match_type. See docs/06-semantic-binding-lookup-plan.md's "Ontology-derived bindings"
+    addendum."""
+    await _seed_org_and_register(db_session)
+    await _seed_bblock(db_session, "ogc.main.example_only")
+    await _seed_bblock(db_session, "ogc.main.schema")
+    await _seed_bblock(db_session, "ogc.main.ontology")
+    await db_session.commit()
+
+    # Insert in reverse rank order, to confirm ordering isn't just insertion order.
+    await bblock_uris_repo.replace_bblock_uris(
+        db_session, "ogc.main.example_only", [("example:Sample", "http://example.org/ns/term", "example")]
+    )
+    await bblock_uris_repo.replace_bblock_uris(
+        db_session, "ogc.main.schema", [("prop", "http://example.org/ns/term", "schema")]
+    )
+    await bblock_uris_repo.replace_bblock_uris(
+        db_session, "ogc.main.ontology", [("ontology", "http://example.org/ns/term", "ontology")]
+    )
+    await db_session.commit()
+
+    matches, total = await bblock_uris_repo.find_bblocks_by_uri(db_session, "http://example.org/ns/term")
+
+    assert total == 3
+    assert [(m.bblock_id, m.source) for m in matches] == [
+        ("ogc.main.ontology", "ontology"),
+        ("ogc.main.schema", "schema"),
+        ("ogc.main.example_only", "example"),
+    ]
+
+
+async def test_find_bblocks_by_uri_sources_filter(db_session):
+    """`sources` restricts matches to the given subset of BindingSource -- e.g. a caller
+    composing/extending schemas, uninterested in ontology-only matches. Filtered in the query
+    itself, so `total` reflects the filtered set, not the unfiltered one."""
+    await _seed_org_and_register(db_session)
+    await _seed_bblock(db_session, "ogc.main.example_only")
+    await _seed_bblock(db_session, "ogc.main.schema")
+    await _seed_bblock(db_session, "ogc.main.ontology")
+    await db_session.commit()
+
+    await bblock_uris_repo.replace_bblock_uris(
+        db_session, "ogc.main.example_only", [("example:Sample", "http://example.org/ns/term", "example")]
+    )
+    await bblock_uris_repo.replace_bblock_uris(
+        db_session, "ogc.main.schema", [("prop", "http://example.org/ns/term", "schema")]
+    )
+    await bblock_uris_repo.replace_bblock_uris(
+        db_session, "ogc.main.ontology", [("ontology", "http://example.org/ns/term", "ontology")]
+    )
+    await db_session.commit()
+
+    matches, total = await bblock_uris_repo.find_bblocks_by_uri(
+        db_session, "http://example.org/ns/term", sources=("schema", "example")
+    )
+    assert total == 2
+    assert {m.bblock_id for m in matches} == {"ogc.main.schema", "ogc.main.example_only"}
+
+    matches, total = await bblock_uris_repo.find_bblocks_by_uri(
+        db_session, "http://example.org/ns/term", sources=("ontology",)
+    )
+    assert total == 1
+    assert [m.bblock_id for m in matches] == ["ogc.main.ontology"]
+
+    # sources=None (default) is unfiltered, matching every source.
+    _, total = await bblock_uris_repo.find_bblocks_by_uri(db_session, "http://example.org/ns/term")
+    assert total == 3
+
+
 async def test_find_bblocks_by_uri_prefix_is_boundary_anchored(db_session):
     """Regression test for the false-positive a plain string-prefix match would have: a uri
     that merely starts with the same characters as the query, but isn't nested under it at a

@@ -159,6 +159,31 @@ async def test_bblocks_by_uri_endpoint(db_session, api_client):
     assert response.status_code == 422
 
 
+async def test_bblocks_by_uri_endpoint_sources_filter(db_session, api_client):
+    await _seed(db_session)
+    from app.repositories.bblock_uris import replace_bblock_uris
+
+    await replace_bblock_uris(db_session, "ogc.main.a", [("ontology", "http://example.org/ns/term", "ontology")])
+    await db_session.commit()
+
+    # Unfiltered: the ontology-sourced binding is found.
+    response = await api_client.get("/bblocks/by-uri", params={"uri": "http://example.org/ns/term"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["numberMatched"] == 1
+    assert body["items"][0]["matched_source"] == "ontology"
+
+    # A caller uninterested in ontology-only matches (e.g. looking for schemas to compose/extend)
+    # excludes "ontology" via the sources filter -- repeated query param for a list.
+    response = await api_client.get(
+        "/bblocks/by-uri", params={"uri": "http://example.org/ns/term", "sources": ["schema", "example"]}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["numberMatched"] == 0
+    assert body["items"] == []
+
+
 async def test_bblock_graph_endpoint(db_session, api_client):
     await _seed(db_session)
     register_info = RegisterInfo(register_id="ogc/main", org_id="ogc", name="main", register_url="https://example.org/register.json")

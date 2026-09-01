@@ -1,8 +1,17 @@
 """Unit tests for app/search/chunking.py's pure functions that don't need network fixtures.
-See docs/06-semantic-binding-lookup-plan.md for _resolved_property_bindings()'s design, and its
-"Example-derived bindings" addendum for _turtle_predicate_uris()/_example_bindings()."""
+See docs/06-semantic-binding-lookup-plan.md for _resolved_property_bindings()'s design, its
+"Example-derived bindings" addendum for _turtle_predicate_uris()/_example_bindings(), and its
+"Ontology-derived bindings" addendum for _ontology_format()/_ontology_subject_uris()/
+_ontology_bindings()."""
 
-from app.search.chunking import _example_bindings, _resolved_property_bindings, _turtle_predicate_uris
+from app.search.chunking import (
+    _example_bindings,
+    _ontology_bindings,
+    _ontology_format,
+    _ontology_subject_uris,
+    _resolved_property_bindings,
+    _turtle_predicate_uris,
+)
 
 
 def test_resolved_property_bindings_properties_only():
@@ -184,3 +193,105 @@ def test_example_bindings_no_ttl_snippet_returns_empty():
 def test_example_bindings_empty_input():
     assert _example_bindings({}) == []
     assert _example_bindings({"examples": []}) == []
+
+
+def test_ontology_format_from_extension():
+    assert _ontology_format("https://example.org/x/ontology.ttl", None) == "turtle"
+    assert _ontology_format("https://example.org/x/ontology.owl", None) == "xml"
+    assert _ontology_format("https://example.org/x/ontology.rdf", "text/plain") == "xml"
+    # Extension wins even when Content-Type would suggest otherwise.
+    assert _ontology_format("https://example.org/x/ontology.ttl", "application/rdf+xml") == "turtle"
+
+
+def test_ontology_format_falls_back_to_content_type_then_default():
+    assert _ontology_format("https://example.org/x/ontology", "application/rdf+xml; charset=utf-8") == "xml"
+    assert _ontology_format("https://example.org/x/ontology", "text/turtle") == "turtle"
+    assert _ontology_format("https://example.org/x/ontology", None) == "turtle"
+
+
+def test_ontology_subject_uris_collects_subjects_not_predicates():
+    ttl = """
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix ex: <https://vocab.acme.test/real#> .
+
+    ex:MyClass a owl:Class ;
+        rdfs:label "My Class" .
+
+    ex:myProperty a owl:ObjectProperty ;
+        rdfs:domain ex:MyClass .
+    """
+
+    # Subjects only -- owl:Class/owl:ObjectProperty (rdf:type objects) and rdfs:label/rdfs:domain
+    # (predicates) are all borrowed vocabulary, not terms this ontology defines, so none of them
+    # appear even though _turtle_predicate_uris() would collect exactly those instead.
+    assert set(_ontology_subject_uris(ttl, "turtle")) == {
+        "https://vocab.acme.test/real#MyClass",
+        "https://vocab.acme.test/real#myProperty",
+    }
+
+
+def test_ontology_subject_uris_skips_blank_node_subjects():
+    ttl = """
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix ex: <https://vocab.acme.test/real#> .
+
+    ex:MyClass a owl:Class ;
+        owl:equivalentClass [ a owl:Restriction ] .
+    """
+
+    # The blank-node restriction is a real subject in the graph (of "a owl:Restriction"), but it
+    # has no URI of its own, so only ex:MyClass should surface.
+    assert _ontology_subject_uris(ttl, "turtle") == ["https://vocab.acme.test/real#MyClass"]
+
+
+def test_ontology_subject_uris_skips_placeholder_namespace():
+    ttl = """
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix ex: <http://example.org/> .
+
+    ex:PlaceholderClass a owl:Class .
+    """
+
+    assert _ontology_subject_uris(ttl, "turtle") == []
+
+
+def test_ontology_subject_uris_parses_rdf_xml():
+    rdf_xml = """<?xml version="1.0"?>
+    <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+             xmlns:owl="http://www.w3.org/2002/07/owl#">
+      <owl:Class rdf:about="https://vocab.acme.test/real#MyClass"/>
+    </rdf:RDF>
+    """
+
+    assert _ontology_subject_uris(rdf_xml, "xml") == ["https://vocab.acme.test/real#MyClass"]
+
+
+def test_ontology_subject_uris_malformed_document_returns_empty_not_raises():
+    assert _ontology_subject_uris("this is not valid turtle {{{", "turtle") == []
+
+
+def test_ontology_subject_uris_deduplicates_preserving_order():
+    ttl = """
+    @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+    @prefix ex: <https://vocab.acme.test/real#> .
+
+    ex:MyClass rdfs:label "First" ;
+        rdfs:comment "Second triple, same subject" .
+    """
+
+    assert _ontology_subject_uris(ttl, "turtle") == ["https://vocab.acme.test/real#MyClass"]
+
+
+def test_ontology_bindings_tags_path_as_constant_ontology_label():
+    ttl = """
+    @prefix owl: <http://www.w3.org/2002/07/owl#> .
+    @prefix ex: <https://vocab.acme.test/real#> .
+    ex:MyClass a owl:Class .
+    """
+
+    assert _ontology_bindings(ttl, "turtle") == [("ontology", "https://vocab.acme.test/real#MyClass")]
+
+
+def test_ontology_bindings_empty_input():
+    assert _ontology_bindings("", "turtle") == []

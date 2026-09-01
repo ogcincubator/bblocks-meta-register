@@ -20,6 +20,15 @@ from app.db.tables import bblock_uris
 # comfortably longer than this in practice. Enforced by callers (API/MCP layer), not here.
 MIN_PREFIX_LENGTH = 8
 
+BindingSource = Literal["ontology", "schema", "example"]
+
+# Ranking ordinal for BindingSource, highest-confidence first -- a bblock's own ontology defines
+# the term outright, a schema binding is an author-declared reference to an external term, and
+# an example merely demonstrates using one. Used both for find_bblocks_by_uri's ORDER BY (via
+# _SOURCE_ORDER_CASE below) and, incidentally, documents the tier order for callers reading this
+# module. See chunking.py's module docstring for the three sources themselves.
+_SOURCE_RANK: dict[str, int] = {"ontology": 2, "schema": 1, "example": 0}
+
 
 @dataclass(frozen=True)
 class UriMatch:
@@ -28,13 +37,15 @@ class UriMatch:
     # Dot-joined property path (e.g. "location.lat"), already flattened by
     # chunking._resolved_property_bindings() -- not re-split back into segments here, since
     # that would be a lossy round-trip for any segment that itself contains a literal ".".
-    # "example:<title>" for a source="example" row instead (see chunking._example_bindings()).
+    # "example:<title>" for a source="example" row, or the constant "ontology" for a
+    # source="ontology" row, instead (see chunking._example_bindings()/_ontology_bindings()).
     path: str | None
     match_type: Literal["exact", "prefix"]
-    # "schema" (declared via resolvedSchemaProperties) or "example" (scraped from a Turtle
-    # example snippet) -- see chunking.py's module docstring. Used as a ranking tiebreaker in
-    # find_bblocks_by_uri: a declared binding outranks an incidental one at the same match_type.
-    source: Literal["schema", "example"]
+    # "ontology" (a term the bblock's own ontology file defines), "schema" (declared via
+    # resolvedSchemaProperties), or "example" (scraped from a Turtle example snippet) -- see
+    # chunking.py's module docstring. Used as a ranking tiebreaker in find_bblocks_by_uri: see
+    # _SOURCE_RANK above for the tier order.
+    source: BindingSource
 
 
 async def replace_bblock_uris(session: AsyncSession, bblock_id: str, bindings: list[tuple[str, str, str]]) -> None:
@@ -117,6 +128,7 @@ async def find_bblocks_by_uri(
     uri: str,
     *,
     mode: Literal["exact", "prefix", "both"] = "both",
+    sources: tuple[BindingSource, ...] | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[UriMatch], int]:
@@ -125,8 +137,15 @@ async def find_bblocks_by_uri(
     the API layer can populate BblockListResponse's numberMatched/numberReturned distinction
     the same way it does for every other bblock-listing endpoint.
 
-    Ordering: `ORDER BY (uri = :uri) DESC, (source = 'schema') DESC, uri, bblock_id` -- two
-    explicit ranking keys ahead of the plain lexical tiebreak:
+    `sources`, if given, restricts matches to that subset of `BindingSource` ("ontology",
+    "schema", "example") -- e.g. a caller composing/extending schemas, uninterested in bblocks
+    that only match via a term their *ontology* defines rather than a schema binding, would pass
+    `sources=("schema", "example")`. Filtered here rather than left to the caller to post-filter
+    the returned page, so `total`/pagination stay correct for the filtered set. `None` (default)
+    matches every source, unchanged from this function's pre-filter behavior.
+
+    Ordering: `ORDER BY (uri = :uri) DESC, source_rank DESC, uri, bblock_id` -- two explicit
+    ranking keys ahead of the plain lexical tiebreak:
 
     1. Exact before prefix. Every row that matches only the boundary-anchored prefix condition
        necessarily has `uri` as a strict, longer extension of the (normalized) input `uri`
@@ -135,27 +154,31 @@ async def find_bblocks_by_uri(
        single-key version this replaced). It's kept explicit now that a second key exists,
        since relying on that lexicographic side effect once source-based ordering is also in
        play would be too easy to break by accident.
-    2. A declared binding (`source = "schema"`) outranks an incidental one (`source = "example"`,
-       scraped from a Turtle example snippet -- see chunking.py's `_example_bindings()`) among
-       rows tied on the first key. A caller asking for the top N bblocks bound to a URI should
-       see the ones that actually declare the binding before the ones that merely use the term
-       in sample data.
+    2. `source_rank` -- a three-tier ranking via `_SOURCE_RANK` ("ontology" > "schema" >
+       "example") among rows tied on the first key. A term the bblock's own ontology *defines*
+       outranks one it merely *declares a binding to* (`resolvedSchemaProperties`), which in
+       turn outranks one its sample data merely *uses* (a Turtle example snippet -- see
+       chunking.py's `_example_bindings()`). A caller asking for the top N bblocks bound to a
+       URI should see the strongest evidence first.
 
     See docs/06-semantic-binding-lookup-plan.md's "Result ordering" / "Example-derived bindings"
-    for the motivation (deterministic pagination; exact/declared hits not getting pushed past
-    `limit` by a popular namespace's prefix or example hits). `match_type` is always based on
-    actual uri == :uri equality, regardless of which `mode` was requested -- e.g. a mode="prefix"
-    query still labels a row equal to the input value "exact".
+    / "Ontology-derived bindings" for the motivation (deterministic pagination; exact/declared
+    hits not getting pushed past `limit` by a popular namespace's prefix or example hits).
+    `match_type` is always based on actual uri == :uri equality, regardless of which `mode` was
+    requested -- e.g. a mode="prefix" query still labels a row equal to the input value "exact".
     """
     where_clause = _match_conditions(uri, mode)
+    if sources is not None:
+        where_clause = and_(where_clause, bblock_uris.c.source.in_(sources))
 
     total = (
         await session.execute(select(func.count()).select_from(bblock_uris).where(where_clause))
     ).scalar_one()
 
+    source_rank = case(_SOURCE_RANK, value=bblock_uris.c.source, else_=-1)
     order_by = (
         case((bblock_uris.c.uri == uri, 1), else_=0).desc(),
-        case((bblock_uris.c.source == "schema", 1), else_=0).desc(),
+        source_rank.desc(),
         bblock_uris.c.uri,
         bblock_uris.c.bblock_id,
     )
