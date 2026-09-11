@@ -1,6 +1,6 @@
 import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -15,7 +15,9 @@ class Org(Base):
     url: Mapped[str | None] = mapped_column(String, nullable=True)
     maintainers: Mapped[list[dict]] = mapped_column(JSON, default=list)
 
-    registers: Mapped[list["Register"]] = relationship(back_populates="org", cascade="all, delete-orphan")
+    registers: Mapped[list["Register"]] = relationship(
+        back_populates="org", cascade="all, delete-orphan", order_by=lambda: func.lower(Register.id)
+    )
 
 
 class Register(Base):
@@ -47,7 +49,9 @@ class Register(Base):
     indexer_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     org: Mapped["Org"] = relationship(back_populates="registers")
-    bblocks: Mapped[list["Bblock"]] = relationship(back_populates="register", cascade="all, delete-orphan")
+    bblocks: Mapped[list["Bblock"]] = relationship(
+        back_populates="register", cascade="all, delete-orphan", order_by=lambda: func.lower(Bblock.id)
+    )
 
 
 class Bblock(Base):
