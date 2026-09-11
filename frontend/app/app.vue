@@ -66,6 +66,19 @@
       <div class="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm">
         <a
           class="inline-flex items-center gap-1 opacity-70 no-underline hover:opacity-100"
+          href="https://ogcincubator.github.io/bblocks-docs/"
+          rel="noopener"
+          target="_blank"
+        >
+          <v-icon
+            icon="mdi-book-open-page-variant-outline"
+            size="16"
+          />
+          Docs
+        </a>
+
+        <a
+          class="inline-flex items-center gap-1 opacity-70 no-underline hover:opacity-100"
           :href="`${apiBase}/docs`"
           rel="noopener"
           target="_blank"
