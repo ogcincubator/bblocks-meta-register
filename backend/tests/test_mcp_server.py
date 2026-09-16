@@ -116,6 +116,10 @@ async def test_register_and_org_tools(db_session, mcp_tools):
     register = await mcp_tools.get_register("ogc/main")
     assert [b["id"] for b in register["bblocks"]] == ["ogc.main.a"]
 
+    register = await mcp_tools.get_register(url="https://example.org/register.json")
+    assert register["id"] == "ogc/main"
+    assert [b["id"] for b in register["bblocks"]] == ["ogc.main.a"]
+
     registers = await mcp_tools.list_registers_tool(org="ogc")
     assert [r["id"] for r in registers] == ["ogc/main"]
 
@@ -127,6 +131,12 @@ async def test_register_and_org_tools(db_session, mcp_tools):
 
     with pytest.raises(ValueError, match="not found"):
         await mcp_tools.get_register("does/not-exist")
+    with pytest.raises(ValueError, match="No register found"):
+        await mcp_tools.get_register(url="https://example.org/missing.json")
+    with pytest.raises(ValueError, match="exactly one"):
+        await mcp_tools.get_register()
+    with pytest.raises(ValueError, match="exactly one"):
+        await mcp_tools.get_register("ogc/main", url="https://example.org/register.json")
     with pytest.raises(ValueError, match="not found"):
         await mcp_tools.get_org("does-not-exist")
 

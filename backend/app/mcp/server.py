@@ -35,7 +35,7 @@ from app.repositories.deps import (
 from app.repositories.orgs import get_org as repo_get_org
 from app.repositories.orgs import list_orgs
 from app.repositories.registers import get_register as repo_get_register
-from app.repositories.registers import get_register_url, list_registers
+from app.repositories.registers import get_register_by_url, get_register_url, list_registers
 from app.schemas.bblock import BblockDetail, BblockSummary, DepEdge
 from app.schemas.org import OrgDetail, OrgSummary
 from app.schemas.register import RegisterDepEdge, RegisterDetail, RegisterSummary
@@ -292,19 +292,31 @@ async def list_bblocks_tool(
 
 
 @mcp.tool()
-async def get_register(identifier: str) -> dict:
-    """Fetch full detail for one register by its alias id (e.g. "ogc/bblocks"), including its
-    bblocks and outgoing/incoming register-level dependency edges. Raises if not found."""
-    async with session_scope() as session:
-        register = await repo_get_register(session, identifier)
-        if register is None:
-            raise ValueError(f"Register '{identifier}' not found")
+async def get_register(identifier: str | None = None, url: str | None = None) -> dict:
+    """Fetch full detail for one register, including its bblocks and outgoing/incoming
+    register-level dependency edges. Look it up either by its alias id (e.g. "ogc/bblocks"),
+    or -- the reverse direction -- by its register.json URL when only that is known (e.g. from
+    a `bblocks-config.yaml` `imports` entry) and the alias needs to be resolved. Exactly one of
+    `identifier`/`url` must be given. Raises if not found."""
+    if (identifier is None) == (url is None):
+        raise ValueError("Provide exactly one of 'identifier' or 'url'")
 
+    async with session_scope() as session:
+        if identifier is not None:
+            register = await repo_get_register(session, identifier)
+            if register is None:
+                raise ValueError(f"Register '{identifier}' not found")
+        else:
+            register = await get_register_by_url(session, url)
+            if register is None:
+                raise ValueError(f"No register found for URL '{url}'")
+
+        register_id = register.id
         depends_on = [
-            RegisterDepEdge(id=t, kind=k) for t, k in await outgoing_register_deps(session, identifier)
+            RegisterDepEdge(id=t, kind=k) for t, k in await outgoing_register_deps(session, register_id)
         ]
         dependents = [
-            RegisterDepEdge(id=s, kind=k) for s, k in await incoming_register_deps(session, identifier)
+            RegisterDepEdge(id=s, kind=k) for s, k in await incoming_register_deps(session, register_id)
         ]
 
         detail = RegisterDetail(

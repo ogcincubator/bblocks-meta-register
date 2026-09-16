@@ -33,7 +33,9 @@ async def get_registers_by_ids(session: AsyncSession, ids: list[str]) -> dict[st
 
 
 async def get_register_by_url(session: AsyncSession, register_url: str) -> Register | None:
-    result = await session.execute(select(Register).where(Register.register_url == register_url))
+    result = await session.execute(
+        select(Register).where(Register.register_url == register_url).options(selectinload(Register.bblocks))
+    )
     return result.scalar_one_or_none()
 
 

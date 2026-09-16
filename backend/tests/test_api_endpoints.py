@@ -92,6 +92,15 @@ async def test_registers_endpoints(db_session, api_client):
     assert body["name"] == "Main"
     assert [b["id"] for b in body["bblocks"]] == ["ogc.main.a"]
 
+    response = await api_client.get("/registers/by-url", params={"url": "https://example.org/register.json"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "ogc/main"
+    assert [b["id"] for b in body["bblocks"]] == ["ogc.main.a"]
+
+    response = await api_client.get("/registers/by-url", params={"url": "https://example.org/missing.json"})
+    assert response.status_code == 404
+
 
 async def test_bblocks_endpoints(db_session, api_client):
     await _seed(db_session)

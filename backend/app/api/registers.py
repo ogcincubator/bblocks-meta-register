@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.api.deps import SessionDep
 from app.repositories.deps import incoming_register_deps, outgoing_register_deps
-from app.repositories.registers import get_register, list_registers
+from app.repositories.registers import get_register, get_register_by_url, list_registers
 from app.schemas.bblock import DependencyGraph, GraphEdge, GraphNode
 from app.schemas.register import RegisterDetail, RegisterDepEdge, RegisterSummary
 from app.services.dependency_graph import build_register_graph
@@ -16,6 +16,28 @@ router = APIRouter(prefix="/registers", tags=["registers"])
 async def list_registers_endpoint(session: SessionDep, org: str | None = None) -> list[RegisterSummary]:
     registers = await list_registers(session, org_id=org)
     return [RegisterSummary.model_validate(r) for r in registers]
+
+
+@router.get("/by-url", response_model=RegisterDetail)
+async def get_register_by_url_endpoint(session: SessionDep, url: str) -> RegisterDetail:
+    """Reverse lookup: resolve a register.json URL to its meta-registry alias/detail."""
+    register = await get_register_by_url(session, url)
+    if register is None:
+        raise HTTPException(status_code=404, detail=f"No register found for URL '{url}'")
+
+    depends_on = [RegisterDepEdge(id=t, kind=k) for t, k in await outgoing_register_deps(session, register.id)]
+    dependents = [RegisterDepEdge(id=s, kind=k) for s, k in await incoming_register_deps(session, register.id)]
+
+    return RegisterDetail(
+        **RegisterSummary.model_validate(register).model_dump(),
+        modified=register.modified,
+        last_crawled_at=register.last_crawled_at,
+        last_crawl_status=register.last_crawl_status,
+        last_error=register.last_error,
+        bblocks=register.bblocks,
+        depends_on=depends_on,
+        dependents=dependents,
+    )
 
 
 @router.get("/{org_id}/{register_name}/graph", response_model=DependencyGraph)
