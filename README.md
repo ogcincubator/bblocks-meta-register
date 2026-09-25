@@ -1,5 +1,9 @@
 # OGC Building Blocks Meta-Registry
 
+Deployed at https://defs-dev.opengis.net/bblocks-meta-register/ - to be redirected from https://w3id.org/ogc/bblocks/
+
+Different meta-registers with different scopes may be deployed in other locations by other organisations. Federation models to be defined.
+
 A catalog and search UI across every [OGC Building Blocks](https://github.com/ogcincubator/bblocks-postprocess)
 register known to the [OGC Building Blocks meta-registry](https://w3id.org/ogc/bblocks/) — an
 organization → register → bblock directory, with reverse-dependency lookup ("what depends on this bblock/register")
