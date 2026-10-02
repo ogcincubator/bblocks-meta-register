@@ -176,6 +176,22 @@ useHead({ title: 'Search' });
 
 const pageCount = computed(() => (data.value ? Math.max(1, Math.ceil(data.value.numberMatched / limit)) : 1));
 
+// The header search box pushes a new query while this page stays mounted, so
+// re-sync local state whenever the URL changes from outside.
+watch(() => route.query, (query) => {
+  const newQ = (query.q as string) ?? '';
+  const newItemClass = (query.item_class as string) ?? null;
+  const newStatus = (query.status as string) ?? null;
+  const newPage = Number(query.page) || 1;
+  q.value = newQ;
+  itemClass.value = newItemClass;
+  statusFilter.value = newStatus;
+  appliedQ.value = newQ;
+  appliedItemClass.value = newItemClass;
+  appliedStatusFilter.value = newStatus;
+  page.value = newPage;
+});
+
 watch([appliedQ, appliedItemClass, appliedStatusFilter, page], () => {
   router.replace({
     query: {
