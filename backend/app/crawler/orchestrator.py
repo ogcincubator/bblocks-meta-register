@@ -16,7 +16,7 @@ from app.crawler.change_detection import needs_reindex
 from app.crawler.discovery import Discovery, RegisterInfo, discover
 from app.crawler.http import make_client
 from app.crawler.indexer import build_search_content, index_register, write_search_content
-from app.crawler.orphans import cleanup_orphans
+from app.crawler.orphans import cleanup_orphans, purge_register
 from app.crawler.register_fetch import fetch_register
 from app.db.base import session_scope
 from app.repositories.crawl_status import finish_run, start_run
@@ -148,6 +148,13 @@ async def run_crawl_cycle(only_register_id: str | None = None) -> None:
         registers = discovery.registers
         if only_register_id is not None:
             registers = [r for r in registers if r.register_id == only_register_id]
+            if not registers:
+                # Scoped to a register index.json no longer lists: purge just that one rather
+                # than silently crawling nothing. Other registers/orgs are left to a full cycle.
+                async with session_scope() as session:
+                    purged = await purge_register(session, only_register_id)
+                    await session.commit()
+                logger.info("Register %s not in index.json; purged=%s", only_register_id, purged)
         else:
             registers = _interleave_by_host(registers)
 

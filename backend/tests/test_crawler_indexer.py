@@ -1,7 +1,7 @@
 from app.crawler.change_detection import INDEXER_VERSION, needs_reindex
 from app.crawler.discovery import Discovery, OrgInfo, RegisterInfo, _parse_registers
 from app.crawler.indexer import _extract_presence, index_register
-from app.crawler.orphans import cleanup_orphans
+from app.crawler.orphans import cleanup_orphans, purge_register
 from app.repositories.bblocks import get_bblock
 from app.repositories.conflicts import list_conflicts
 from app.repositories.deps import outgoing_bblock_deps, outgoing_register_deps
@@ -191,3 +191,64 @@ async def test_cleanup_orphans_removes_delisted_register(db_session):
     assert deleted["deleted_registers"] == ["ogc/main"]
     assert await get_bblock(db_session, "ogc.main.a") is None
     assert await get_register(db_session, "ogc/main") is None
+
+
+async def _fts_count(session, register_id: str) -> int:
+    from sqlalchemy import text
+
+    result = await session.execute(
+        text("SELECT count(*) FROM bblocks_fts WHERE register_id = :r"), {"r": register_id}
+    )
+    return result.scalar_one()
+
+
+async def _seed_fts(session, register_id: str) -> None:
+    from app.search import keyword_index
+
+    await keyword_index.upsert(
+        session,
+        bblock_id=f"{register_id}.a".replace("/", "."),
+        register_id=register_id,
+        org=register_id.split("/")[0],
+        item_class=None,
+        status=None,
+        name="A",
+        abstract=None,
+        tags=[],
+    )
+
+
+async def test_cleanup_orphans_clears_search_index(db_session):
+    await _seed_register(db_session, register_id="ogc/main")
+    register_info = RegisterInfo(register_id="ogc/main", org_id="ogc", name="main", register_url="https://x/r.json")
+    await index_register(db_session, register_info, make_register_json({"itemIdentifier": "ogc.main.a", "name": "A"}))
+    await _seed_fts(db_session, "ogc/main")
+    await db_session.commit()
+    assert await _fts_count(db_session, "ogc/main") == 1
+
+    discovery = Discovery(orgs=[OrgInfo(org_id="ogc", name="ogc", description=None, url=None, maintainers=[])], registers=[])
+    await cleanup_orphans(db_session, discovery)
+    await db_session.commit()
+
+    assert await _fts_count(db_session, "ogc/main") == 0
+
+
+async def test_purge_register_only_touches_target(db_session):
+    for org_id, name in (("ogc", "main"), ("acme", "other")):
+        register_id = f"{org_id}/{name}"
+        await _seed_register(db_session, org_id=org_id)
+        info = RegisterInfo(
+            register_id=register_id, org_id=org_id, name=name, register_url=f"https://{org_id}/r.json"
+        )
+        await index_register(db_session, info, make_register_json({"itemIdentifier": f"{org_id}.{name}.a", "name": "A"}))
+        await _seed_fts(db_session, register_id)
+    await db_session.commit()
+
+    assert await purge_register(db_session, "ogc/main") is True
+    assert await purge_register(db_session, "ogc/missing") is False
+    await db_session.commit()
+
+    assert await get_register(db_session, "ogc/main") is None
+    assert await get_register(db_session, "acme/other") is not None
+    assert await _fts_count(db_session, "ogc/main") == 0
+    assert await _fts_count(db_session, "acme/other") == 1
