@@ -7,7 +7,7 @@ bblock/register may not be indexed yet, or ever). See app/db/tables.py.
 from sqlalchemy import Table, delete, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.tables import bblock_deps, register_deps
+from app.db.tables import bblock_deps, register_deps, register_imports
 
 
 async def replace_bblock_deps(
@@ -150,23 +150,18 @@ async def traverse_incoming_bblock_deps(session: AsyncSession, start_id: str, de
     return await _traverse_self_join(session, bblock_deps, "target_id", "source_id", start_id, depth)
 
 
-async def replace_register_deps(
-    session: AsyncSession, source_register_id: str, edges: set[tuple[str, str]]
-) -> None:
-    """Replace all outgoing register-level edges for one register (rolled up from bblock_deps
-    by the indexer). `edges` is a set of (target_register_id, kind). Flushes first -- see
-    replace_bblock_deps for why."""
+async def replace_register_imports(session: AsyncSession, source_register_id: str, urls: list[str]) -> None:
+    """Replace all declared `imports` (register.json URLs) for one register. Stored unresolved --
+    register_deps (a view) resolves them against registers.register_url at read time. Flushes
+    first -- see replace_bblock_deps for why."""
     await session.flush()
     await session.execute(
-        delete(register_deps).where(register_deps.c.source_register_id == source_register_id)
+        delete(register_imports).where(register_imports.c.source_register_id == source_register_id)
     )
-    if edges:
+    if urls:
         await session.execute(
-            insert(register_deps),
-            [
-                {"source_register_id": source_register_id, "target_register_id": target_id, "kind": kind}
-                for target_id, kind in edges
-            ],
+            insert(register_imports),
+            [{"source_register_id": source_register_id, "target_url": url} for url in sorted(set(urls))],
         )
 
 

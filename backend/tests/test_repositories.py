@@ -12,7 +12,9 @@ from app.repositories import registers as registers_repo
 pytestmark = pytest.mark.asyncio
 
 
-async def _seed_org_and_register(session, org_id="ogc", register_id="ogc/main"):
+async def _seed_org_and_register(
+    session, org_id="ogc", register_id="ogc/main", register_url="https://example.org/register.json"
+):
     await orgs_repo.upsert_org(
         session, org_id=org_id, name="OGC", description="desc", url="https://ogc.org", maintainers=[]
     )
@@ -21,7 +23,7 @@ async def _seed_org_and_register(session, org_id="ogc", register_id="ogc/main"):
         register_id=register_id,
         org_id=org_id,
         name="main",
-        register_url="https://example.org/register.json",
+        register_url=register_url,
         viewer_url=None,
         description=None,
     )
@@ -167,10 +169,21 @@ async def test_bblock_deps_and_register_deps_roundtrip(db_session):
     incoming = await deps_repo.incoming_bblock_deps(db_session, "ogc.main.b")
     assert incoming == [("ogc.main.a", "dependsOn")]
 
-    await deps_repo.replace_register_deps(db_session, "ogc/main", {("acme/other", "dependsOn")})
+    # register_deps is a view: bblock-level edges roll up once the target bblock is owned by
+    # another register, and declared imports resolve by register.json URL.
+    assert await deps_repo.outgoing_register_deps(db_session, "ogc/main") == []
+    await _seed_org_and_register(db_session, org_id="acme", register_id="acme/other", register_url="https://acme/r.json")
+    await _seed_bblock(db_session, "ogc.main.b", register_id="acme/other")
+    await deps_repo.replace_register_imports(db_session, "ogc/main", ["https://acme/r.json", "https://nope/r.json"])
     await db_session.commit()
-    assert await deps_repo.outgoing_register_deps(db_session, "ogc/main") == [("acme/other", "dependsOn")]
-    assert await deps_repo.incoming_register_deps(db_session, "acme/other") == [("ogc/main", "dependsOn")]
+    assert sorted(await deps_repo.outgoing_register_deps(db_session, "ogc/main")) == [
+        ("acme/other", "dependsOn"),
+        ("acme/other", "imports"),
+    ]
+    assert sorted(await deps_repo.incoming_register_deps(db_session, "acme/other")) == [
+        ("ogc/main", "dependsOn"),
+        ("ogc/main", "imports"),
+    ]
 
 
 async def _seed_bblock(session, bblock_id, register_id="ogc/main"):

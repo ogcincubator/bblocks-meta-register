@@ -4,7 +4,7 @@ from app.crawler.indexer import _extract_presence, index_register
 from app.crawler.orphans import cleanup_orphans, purge_register
 from app.repositories.bblocks import get_bblock
 from app.repositories.conflicts import list_conflicts
-from app.repositories.deps import outgoing_bblock_deps, outgoing_register_deps
+from app.repositories.deps import incoming_register_deps, outgoing_bblock_deps, outgoing_register_deps
 from app.repositories.orgs import upsert_org
 from app.repositories.registers import get_register, set_register_modified, upsert_register
 
@@ -176,6 +176,42 @@ async def test_index_register_rolls_up_register_deps(db_session):
     await db_session.commit()
 
     assert await outgoing_register_deps(db_session, "ogc/main") == [("acme/other", "dependsOn")]
+
+
+async def test_register_imports_resolve_regardless_of_crawl_order(db_session):
+    await _seed_register(db_session, register_id="ogc/main")
+    main_info = RegisterInfo(register_id="ogc/main", org_id="ogc", name="main", register_url="https://x/r.json")
+    register_json = make_register_json({"itemIdentifier": "ogc.main.a", "name": "A"})
+    # One import of a register not indexed yet (no bblock-level dependency) and one external one.
+    register_json["imports"] = ["https://acme/r.json", "https://unknown.example/r.json"]
+    await index_register(db_session, main_info, register_json)
+    await db_session.commit()
+    assert await outgoing_register_deps(db_session, "ogc/main") == []
+
+    # The target is indexed *after* the importer: the edge appears with no re-index of ogc/main.
+    await upsert_org(db_session, org_id="acme", name="acme", description=None, url=None, maintainers=[])
+    other_info = RegisterInfo(register_id="acme/other", org_id="acme", name="other", register_url="https://acme/r.json")
+    await index_register(db_session, other_info, make_register_json({"itemIdentifier": "acme.other.x", "name": "X"}))
+    await db_session.commit()
+    assert await outgoing_register_deps(db_session, "ogc/main") == [("acme/other", "imports")]
+    assert await incoming_register_deps(db_session, "acme/other") == [("ogc/main", "imports")]
+
+
+async def test_register_imports_are_replaced_on_reindex(db_session):
+    await _seed_register(db_session, register_id="ogc/main")
+    await upsert_org(db_session, org_id="acme", name="acme", description=None, url=None, maintainers=[])
+    other_info = RegisterInfo(register_id="acme/other", org_id="acme", name="other", register_url="https://acme/r.json")
+    await index_register(db_session, other_info, make_register_json({"itemIdentifier": "acme.other.x", "name": "X"}))
+    main_info = RegisterInfo(register_id="ogc/main", org_id="ogc", name="main", register_url="https://x/r.json")
+    with_import = make_register_json({"itemIdentifier": "ogc.main.a", "name": "A"})
+    with_import["imports"] = ["https://acme/r.json"]
+    await index_register(db_session, main_info, with_import)
+    await db_session.commit()
+    assert await outgoing_register_deps(db_session, "ogc/main") == [("acme/other", "imports")]
+
+    await index_register(db_session, main_info, make_register_json({"itemIdentifier": "ogc.main.a", "name": "A"}))
+    await db_session.commit()
+    assert await outgoing_register_deps(db_session, "ogc/main") == []
 
 
 async def test_cleanup_orphans_removes_delisted_register(db_session):

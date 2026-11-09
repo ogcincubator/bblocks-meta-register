@@ -15,7 +15,7 @@ from app.crawler.discovery import RegisterInfo
 from app.repositories.bblock_uris import replace_bblock_uris
 from app.repositories.bblocks import delete_bblocks_for_register, get_owning_register_id, upsert_bblock
 from app.repositories.conflicts import record_conflict
-from app.repositories.deps import outgoing_bblock_deps, replace_bblock_deps, replace_register_deps
+from app.repositories.deps import replace_bblock_deps, replace_register_imports
 from app.repositories.registers import upsert_register
 from app.search import keyword_index, vector_store
 from app.search.chunking import build_register_chunks
@@ -29,7 +29,7 @@ def _normalize_target_id(target: str) -> str:
     `bblocks://itemIdentifier` URIs (the scheme docs/01-overall-architecture.md describes).
     Strip the scheme so the edge's target_id matches the same id format used as bblocks.id --
     otherwise a real dependency would never resolve to its owning register (see
-    outgoing_register_deps roll-up) even once the target is indexed."""
+    register_deps view's roll-up) even once the target is indexed."""
     prefix = "bblocks://"
     return target[len(prefix):] if target.startswith(prefix) else target
 
@@ -47,6 +47,14 @@ def _extract_edges(raw_bblock: dict) -> list[tuple[str, str]]:
             (_normalize_target_id(target), kind) for target in targets if isinstance(target, str) and target
         )
     return edges
+
+
+def _extract_imports(register_json: dict) -> list[str]:
+    """register.json's top-level `imports`: a list of imported registers' register.json URLs."""
+    imports = register_json.get("imports")
+    if not isinstance(imports, list):
+        return []
+    return [url.strip() for url in imports if isinstance(url, str) and url.strip()]
 
 
 def _extract_presence(raw_bblock: dict) -> tuple[dict, str | None, list[str]]:
@@ -152,15 +160,10 @@ async def index_register(
             continue
         indexed_ids.append(bblock_id)
 
-    # Roll up bblock-level edges to register-level edges (register.json has no separate
-    # `imports`-equivalent field, so this is the only source of register_deps).
-    register_edges: set[tuple[str, str]] = set()
-    for bblock_id in indexed_ids:
-        for target_id, kind in await outgoing_bblock_deps(session, bblock_id):
-            target_register_id = await get_owning_register_id(session, target_id)
-            if target_register_id and target_register_id != register_id:
-                register_edges.add((target_register_id, kind))
-    await replace_register_deps(session, register_id, register_edges)
+    # Register-level dependencies are derived at read time (the register_deps view) from
+    # bblock_deps plus these declared imports; only the unresolved import URLs are stored here,
+    # so neither this register's nor its targets' crawl order matters.
+    await replace_register_imports(session, register_id, _extract_imports(register_json))
 
     return indexed_ids, failed_ids
 

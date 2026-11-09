@@ -13,7 +13,7 @@ autogenerate diffs both together.
 
 import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Table
+from sqlalchemy import DDL, Column, DateTime, ForeignKey, Integer, MetaData, String, Table, event
 
 from app.db.base import metadata
 
@@ -27,14 +27,48 @@ bblock_deps = Table(
     Column("kind", String, primary_key=True),  # "dependsOn" | "isProfileOf"
 )
 
-register_deps = Table(
-    "register_deps",
+# Facts: the `imports` a register.json declares (register.json URLs), stored verbatim and
+# unresolved. Resolution to a registers.id happens at read time in the register_deps view below,
+# so crawl order doesn't matter and nothing here can go stale when a target is delisted or
+# re-URLed. Full-replaced per source register on every reindex (see replace_register_imports).
+register_imports = Table(
+    "register_imports",
     metadata,
     Column("source_register_id", ForeignKey("registers.id", ondelete="CASCADE"), primary_key=True),
-    # No FK: target register may not be known/crawled yet. Indexed anyway -- reverse-lookup
-    # queries (incoming_register_deps()) filter on it.
-    Column("target_register_id", String, primary_key=True, index=True),
-    Column("kind", String, primary_key=True),
+    # No FK: the imported register may not be known to the meta-registry (or crawled yet).
+    # Indexed anyway -- the register_deps view joins registers.register_url against it.
+    Column("target_url", String, primary_key=True, index=True),
+)
+
+# register_deps is a *view*, not a table: register-level edges are derived at read time from
+# bblock_deps (rolled up to the registers owning each end) plus register_imports (resolved by
+# register.json URL). It lives on its own MetaData so Alembic autogenerate and create_all don't
+# treat it as a table; the CREATE VIEW is emitted after register_imports is created (see the
+# DDL listener below, which also covers tests' metadata.create_all) and by migration 0007.
+REGISTER_DEPS_VIEW_SQL = """
+CREATE VIEW register_deps AS
+SELECT sb.register_id AS source_register_id, tb.register_id AS target_register_id, bd.kind AS kind
+FROM bblock_deps bd
+JOIN bblocks sb ON sb.id = bd.source_id
+JOIN bblocks tb ON tb.id = bd.target_id
+WHERE sb.register_id != tb.register_id
+UNION
+SELECT ri.source_register_id, r.id, 'imports'
+FROM register_imports ri
+JOIN registers r ON r.register_url = ri.target_url
+WHERE r.id != ri.source_register_id
+"""
+
+event.listen(register_imports, "after_create", DDL(REGISTER_DEPS_VIEW_SQL))
+event.listen(register_imports, "before_drop", DDL("DROP VIEW IF EXISTS register_deps"))
+
+_view_metadata = MetaData()
+register_deps = Table(
+    "register_deps",
+    _view_metadata,
+    Column("source_register_id", String),
+    Column("target_register_id", String),
+    Column("kind", String),
 )
 
 bblock_uris = Table(

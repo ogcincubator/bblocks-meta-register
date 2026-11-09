@@ -140,9 +140,11 @@ Doc 03's keyword + semantic hybrid search, minus ontology-term boosting (see "Wh
   breaks downstream consumers with a strict `list[str]` schema (e.g. the `get_bblock` MCP tool, which raised a
   Pydantic validation error over nested single-element lists before this was fixed). `dependsOn`/`isProfileOf` targets are
   sometimes `bblocks://itemIdentifier` URIs and sometimes bare `itemIdentifier` strings in the wild (normalized by
-  stripping the scheme in `app/crawler/indexer.py::_normalize_target_id`); there's no register-level `imports`
-  field, so `register_deps` is derived entirely by rolling up `bblock_deps` edges to the registers their source/
-  target bblocks belong to.
+  stripping the scheme in `app/crawler/indexer.py::_normalize_target_id`). `register_deps` is a SQL *view* (migration 0007, `app/db/tables.py::REGISTER_DEPS_VIEW_SQL`), not a table: it unions
+  `bblock_deps` rolled up to the registers owning each end with the new `register_imports` table (the register.json's
+  top-level `imports` URLs, stored unresolved and joined to `registers.register_url` at read time, kind `imports`).
+  Nothing is resolved at write time, so crawl order can't drop edges, and delisting/re-URLing a target needs no
+  cleanup. Imports of URLs not in the meta-registry simply produce no edge.
 - **The real meta-registry data had a bug** (some `register.json` URLs pointed at `.../register.json` instead of
   the actual `.../build/register.json` publish path) — since fixed upstream in `bblocks-meta-register-data`. Worth
   remembering if a "register 404s" report comes in again: check the upstream data before assuming a crawler bug.
