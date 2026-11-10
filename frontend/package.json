@@ -20,19 +20,24 @@
     "markdown-it": "^14.3.0",
     "nuxt": "^4.4.2",
     "v-network-graph": "^0.9.23",
-    "vue": "^3.5.30",
+    "vue": "^3.5.45",
     "vuetify": "^4.0.2",
     "vuetify-nuxt-module": "^1.0.0-beta.1"
   },
   "resolutions": {
-    "eslint/**/brace-expansion": "^1.1.18",
-    "@eslint/eslintrc/**/brace-expansion": "^1.1.18",
-    "@eslint/config-array/**/brace-expansion": "^1.1.18",
+    "eslint/**/brace-expansion": "^1.1.21",
+    "@eslint/eslintrc/**/brace-expansion": "^1.1.21",
+    "@eslint/config-array/**/brace-expansion": "^1.1.21",
     "immutable": "^5.1.9",
     "js-yaml": "^4.3.2",
     "esbuild": "^0.28.1",
     "svgo": "^4.1.0",
-    "postcss-selector-parser": "^7.1.6"
+    "postcss-selector-parser": "^7.1.6",
+    "source-map-js": "^1.2.2",
+    "glob": "^14.0.2",
+    "**/@typescript-eslint/typescript-estree/minimatch": "^11.0.1",
+    "**/readdir-glob/minimatch": "^11.0.1",
+    "**/eslint-plugin-import-x/minimatch": "^11.0.1"
   },
   "devDependencies": {
     "@intellectronica/ruler": "^0.3.37",
