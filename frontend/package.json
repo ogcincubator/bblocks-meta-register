@@ -31,7 +31,8 @@
     "immutable": "^5.1.9",
     "js-yaml": "^4.3.2",
     "esbuild": "^0.28.1",
-    "svgo": "^4.1.0"
+    "svgo": "^4.1.0",
+    "postcss-selector-parser": "^7.1.6"
   },
   "devDependencies": {
     "@intellectronica/ruler": "^0.3.37",
